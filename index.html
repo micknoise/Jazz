@@ -68,10 +68,11 @@
       uniform float     uTime;    // elapsed seconds (available for future use)
 
       void main() {
-        // Map the sphere's U coordinate to a frequency bin.
-        // uv.x wraps 0→1 around longitude, giving each ring of vertices its
-        // own frequency band. The deformation is purely radial (along normal).
-        float mag      = texture2D(uFFT, vec2(uv.x, 0.5)).r;
+        // uv.x goes 0→1 around the sphere's longitude, but 0 and 1 are the same
+        // seam point — so the sphere has one half at u=0..0.5 and the mirror
+        // half at u=0.5..1.  Cycling twice with fract(uv.x * 2.0) maps both
+        // halves to the full FFT range, so the whole sphere deforms uniformly.
+        float mag      = texture2D(uFFT, vec2(fract(uv.x * 2.0), 0.5)).r;
         vec3  displaced = position + normal * mag * uDeform;
 
         gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
