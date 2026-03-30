@@ -66,8 +66,8 @@
         return {
           update: function (fftArray, elapsed, dt) {
             mat.uniforms.uTime.value = elapsed;
-            mesh.rotation.y += (0.2 + window.jazzRMS * 5.0) * dt;
-            mesh.rotation.x += (0.1 + window.jazzRMS * 2.0) * dt;
+            mesh.rotation.y += window.jazzRotDir[1] * (0.2 + window.jazzRMS * 5.0) * dt;
+            mesh.rotation.x += window.jazzRotDir[0] * (0.1 + window.jazzRMS * 2.0) * dt;
           },
           reset: function () {
             mesh.rotation.set(0, 0, 0);

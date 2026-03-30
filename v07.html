@@ -76,7 +76,7 @@
           update: function (fftArray, elapsed, dt) {
             uniforms.uTime.value = elapsed;
             meshes.forEach(function (mesh, i) {
-              mesh.rotation.y += yRates[i] * dt * 60;
+              mesh.rotation.y += window.jazzRotDir[1] * yRates[i] * dt * 60;
               mesh.rotation.x = i * 0.3 + Math.sin(elapsed * 0.3 + i * 0.8) * window.jazzRMS * 1.5;
             });
           },

@@ -66,8 +66,8 @@
 
             // Slow rotation driven by RMS amplitude
             var rotSpeed = 0.05 + window.jazzRMS * 0.4;
-            mesh.rotation.y += rotSpeed * dt;
-            mesh.rotation.x += rotSpeed * 0.3 * dt;
+            mesh.rotation.y += window.jazzRotDir[1] * rotSpeed * dt;
+            mesh.rotation.x += window.jazzRotDir[0] * rotSpeed * 0.3 * dt;
           },
           reset: function () {
             mesh.rotation.set(0, 0, 0);

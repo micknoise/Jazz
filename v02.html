@@ -96,7 +96,7 @@
 
             // Slow spin of rings for a hypnotic depth effect
             rings.forEach(function (r, i) {
-              r.mesh.rotation.z += (0.1 + window.jazzRMS * 1.5) * dt;
+              r.mesh.rotation.z += window.jazzRotDir[2] * (0.1 + window.jazzRMS * 1.5) * dt;
             });
           },
           reset: function () {

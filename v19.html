@@ -80,7 +80,7 @@
               if (rings[i].position.z > 700) {
                 rings[i].position.z = -600;
               }
-              rings[i].rotation.z += (0.01 + window.jazzRMS * 0.2) * dt * 60;
+              rings[i].rotation.z += window.jazzRotDir[2] * (0.01 + window.jazzRMS * 0.2) * dt * 60;
             }
           },
           reset: function () {

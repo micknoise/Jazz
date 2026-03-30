@@ -83,8 +83,8 @@
         return {
           update: function (fftArray, elapsed, dt) {
             // Outer torus: fast Z spin, slow X spin
-            outerTorus.rotation.z += (0.02 + window.jazzRMS * 0.4) * dt * 60;
-            outerTorus.rotation.x += (0.005 + window.jazzRMS * 0.1) * dt * 60;
+            outerTorus.rotation.z += window.jazzRotDir[2] * (0.02 + window.jazzRMS * 0.4) * dt * 60;
+            outerTorus.rotation.x += window.jazzRotDir[0] * (0.005 + window.jazzRMS * 0.1) * dt * 60;
 
             // Inner torus: opposite direction
             innerTorus.rotation.z -= (0.02 + window.jazzRMS * 0.4) * dt * 60;
