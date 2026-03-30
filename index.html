@@ -52,19 +52,19 @@
 
     // -------------------------------------------------------------------------
     // FFT data texture — updated every frame from the AnalyserNode.
-    // 256 bins packed as RGBA Uint8; shader reads the R channel (0–1).
+    // Single-channel Float32; shader reads the R channel as linear amplitude.
     // -------------------------------------------------------------------------
     var FFT_BINS    = 256;
-    var fftArray    = new Uint8Array(FFT_BINS * 4);
-    var fftTexture  = new THREE.DataTexture(fftArray, FFT_BINS, 1, THREE.RGBAFormat);
-    fftTexture.magFilter = THREE.LinearFilter;
+    var fftArray    = new Float32Array(FFT_BINS);
+    var fftTexture  = new THREE.DataTexture(fftArray, FFT_BINS, 1, THREE.RedFormat, THREE.FloatType);
+    fftTexture.magFilter = THREE.NearestFilter;
     fftTexture.needsUpdate = true;
 
     // -------------------------------------------------------------------------
     // Shaders
     // -------------------------------------------------------------------------
     var vertexShader = /* glsl */`
-      uniform sampler2D uFFT;     // frequency-magnitude texture (0–1 per bin)
+      uniform sampler2D uFFT;     // frequency-magnitude texture (linear amplitude per bin)
       uniform float     uDeform;  // maximum radial displacement in world units
       uniform float     uTime;    // elapsed seconds (available for future use)
 
@@ -93,7 +93,7 @@
     var material = new THREE.ShaderMaterial({
       uniforms: {
         uFFT:    { value: fftTexture },
-        uDeform: { value: 200.0 },   // deform by up to 1× sphere radius
+        uDeform: { value: 1000.0 },  // deform scale; linear amplitude vals can exceed 1
         uTime:   { value: 0.0 }
       },
       vertexShader:   vertexShader,
@@ -107,9 +107,9 @@
     // -------------------------------------------------------------------------
     // Audio analysis state
     // -------------------------------------------------------------------------
-    var analyser     = null;
-    var byteFreqData = null;
-    var timeData     = null;
+    var analyser      = null;
+    var floatFreqData = null;
+    var timeData      = null;
     var smoothedA    = 0;   // proxy for _a envelope — drives X rotation rate
     var smoothedB    = 0;   // proxy for _b envelope — drives Y rotation rate
 
@@ -289,7 +289,7 @@
           var audioCtx  = maxi.audioWorkletNode.context;
           analyser      = audioCtx.createAnalyser();
           analyser.fftSize = FFT_BINS * 2; // frequencyBinCount = FFT_BINS
-          byteFreqData  = new Uint8Array(analyser.frequencyBinCount);
+          floatFreqData = new Float32Array(analyser.frequencyBinCount);
           timeData      = new Float32Array(analyser.fftSize);
           maxi.audioWorkletNode.connect(analyser);
         }
@@ -310,14 +310,12 @@
       material.uniforms.uTime.value = elapsed;
 
       if (analyser) {
-        // Update FFT texture
-        analyser.getByteFrequencyData(byteFreqData);
+        // Update FFT texture — convert dB → linear amplitude so large FM
+        // magnitudes produce the same explosive deformation as the original.
+        analyser.getFloatFrequencyData(floatFreqData);
         for (var i = 0; i < FFT_BINS; i++) {
-          var v = byteFreqData[i];
-          fftArray[i * 4]     = v;
-          fftArray[i * 4 + 1] = v;
-          fftArray[i * 4 + 2] = v;
-          fftArray[i * 4 + 3] = 255;
+          var db = floatFreqData[i];
+          fftArray[i] = isFinite(db) ? Math.pow(10, db / 20) : 0;
         }
         fftTexture.needsUpdate = true;
 
@@ -349,7 +347,7 @@
     // -------------------------------------------------------------------------
     var visualParams = { uDeform: material.uniforms.uDeform.value };
 
-    var gui = new lil.GUI();
+    var gui = new lil.GUI({ title: 'Jazz' });
 
     var timingFolder = gui.addFolder('Timing');
     timingFolder.add(audioParams, 'sparsity_1',       0,   1,   0.01).name('Slow event threshold').onChange(sendRealtimeParams);
@@ -372,7 +370,7 @@
     fastFolder.add(audioParams, 'fastModIRange',    0, 20000,   1).name('Mod index range')         .onChange(sendRealtimeParams);
 
     var visualFolder = gui.addFolder('Visuals');
-    visualFolder.add(visualParams, 'uDeform', 0, 500, 1).name('Deform depth').onChange(function() {
+    visualFolder.add(visualParams, 'uDeform', 0, 3000, 1).name('Deform depth').onChange(function() {
       material.uniforms.uDeform.value = visualParams.uDeform;
     });
 
