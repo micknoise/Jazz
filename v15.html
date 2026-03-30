@@ -82,7 +82,7 @@
             }),
             transparent: true,
             depthWrite: false,
-            side: THREE.BackSide   // Normals point inward = deform inward into room
+            side: THREE.DoubleSide // render from inside the room
           });
 
           var mesh = new THREE.Mesh(geo, mat);

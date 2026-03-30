@@ -55,8 +55,8 @@
           vertexShader: ss.vertexShader,
           fragmentShader: ss.fragmentShader,
           uniforms: ss.makeUniforms({
-            uDeform: { value: 500.0 },
-            uFFTUV: { value: 1.0 }
+            uDeform: { value: 800.0 },
+            uFFTUV: { value: 0.0 }  // fract(uv.x*2) cycles FFT across width
           }),
           transparent: true,
           depthWrite: false

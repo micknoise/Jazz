@@ -27,7 +27,7 @@
     void main() {
       vBary = barycentric;
       float uvCoord = mix(fract(uv.x * 2.0), uv.y, uFFTUV);
-      float mag = texture2D(uFFT, vec2(uvCoord, 0.5)).r;
+      float mag = clamp(texture2D(uFFT, vec2(uvCoord, 0.5)).r, 0.0, 20.0);
       vec3 displaced = position + normal * mag * uDeform;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
     }
@@ -56,11 +56,12 @@
     var camSpeed     = cfg.speed        || 150;
 
     // ── Renderer ────────────────────────────────────────────────────────────
-    var renderer = new THREE.WebGLRenderer({ antialias: false });
+    var renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 1);
-    // Trails: keep colour buffer between frames — clear only depth each frame
+    // preserveDrawingBuffer keeps the colour buffer alive between rAF calls.
+    // autoClear=false means we handle clearing manually: depth only, each frame.
     renderer.autoClear = false;
     document.body.appendChild(renderer.domElement);
 
@@ -94,6 +95,7 @@
     var fftArray   = new Float32Array(FFT_BINS);
     var fftTexture = new THREE.DataTexture(fftArray, FFT_BINS, 1, THREE.RedFormat, THREE.FloatType);
     fftTexture.magFilter = THREE.NearestFilter;
+    fftTexture.minFilter = THREE.NearestFilter;
 
     // ── Shared shader helpers ────────────────────────────────────────────────
     var sharedShaders = {
@@ -278,19 +280,25 @@
             .then(function (dspEngine) {
               maxi = dspEngine;
               sendRealtimeParams();
+              // setAudioCode uses an internal 50ms timer before eval'ing the
+              // DSP code into the worklet. We must wait for that to complete
+              // before calling play(), otherwise the audio context resumes
+              // before the DSP is loaded and produces silence on the first click.
               maxi.setAudioCode(buildDSPCode(audioParams));
-              maxi.play();
-              engineReady = true;
-              playing = true;
-              playBtn.textContent = 'stop';
-              playBtn.disabled = false;
-              if (maxi.audioWorkletNode) {
-                var ctx = maxi.audioWorkletNode.context;
-                analyser = ctx.createAnalyser();
-                analyser.fftSize = FFT_BINS * 2;
-                floatFreqData = new Float32Array(analyser.frequencyBinCount);
-                maxi.audioWorkletNode.connect(analyser);
-              }
+              setTimeout(function () {
+                maxi.play();
+                engineReady = true;
+                playing = true;
+                playBtn.textContent = 'stop';
+                playBtn.disabled = false;
+                if (maxi.audioWorkletNode) {
+                  var ctx = maxi.audioWorkletNode.context;
+                  analyser = ctx.createAnalyser();
+                  analyser.fftSize = FFT_BINS * 2;
+                  floatFreqData = new Float32Array(analyser.frequencyBinCount);
+                  maxi.audioWorkletNode.connect(analyser);
+                }
+              }, 200);
             });
         } else {
           maxi.audioWorkletNode.context.resume();
@@ -351,9 +359,11 @@
     timingF.close(); slowF.close(); fastF.close();
 
     // ── Render loop ──────────────────────────────────────────────────────────
-    var clock    = new THREE.Clock();
+    var clock     = new THREE.Clock();
     var rmsSmooth = 0;
-    window.jazzRMS = 0; // exposed for variation update functions
+    var prevRmsForEvent = 0;
+    window.jazzRMS    = 0;               // smoothed RMS, 0–0.3 range typical
+    window.jazzRotDir = [1, 1, 1];       // [x,y,z] rotation signs; flip on events
 
     function draw() {
       var dt      = Math.min(clock.getDelta(), 0.05);
@@ -377,6 +387,15 @@
         rawRms = Math.sqrt(rawRms / FFT_BINS);
         rmsSmooth = rmsSmooth * 0.88 + rawRms * 0.12;
         window.jazzRMS = rmsSmooth;
+
+        // Detect audio event: RMS spike > 30% above recent level.
+        // On each event, randomly flip per-axis rotation directions.
+        if (rmsSmooth > prevRmsForEvent * 1.3 && rmsSmooth > 0.03) {
+          window.jazzRotDir[0] = Math.random() > 0.5 ? 1 : -1;
+          window.jazzRotDir[1] = Math.random() > 0.5 ? 1 : -1;
+          window.jazzRotDir[2] = Math.random() > 0.5 ? 1 : -1;
+        }
+        prevRmsForEvent = prevRmsForEvent * 0.95 + rmsSmooth * 0.05;
 
         // 3. Boost: normalise to peak, add 30% floor so ALL vertices deform,
         //    then amplify 4× for dramatic effect.
