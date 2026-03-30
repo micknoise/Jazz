@@ -80,6 +80,9 @@
         return {
           update: function (fftArray, elapsed, dt) {
             uniforms.uTime.value = elapsed;
+            meshes.forEach(function (ring) {
+              ring.rotation.y += (0.005 + window.jazzRMS * 0.1) * dt * 60;
+            });
           },
           reset: function () {
             meshes.forEach(function (mesh, i) {

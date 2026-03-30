@@ -68,9 +68,9 @@
             mat.uniforms.uTime.value = elapsed;
 
             // Rotate on all 3 axes at different rates for a tumbling crystal feel
-            mesh.rotation.x += 0.11 * dt;
-            mesh.rotation.y += 0.17 * dt;
-            mesh.rotation.z += 0.07 * dt;
+            mesh.rotation.x += (0.11 + window.jazzRMS * 2.0) * dt;
+            mesh.rotation.y += (0.17 + window.jazzRMS * 3.0) * dt;
+            mesh.rotation.z += (0.07 + window.jazzRMS * 1.5) * dt;
           },
           reset: function () {
             mesh.rotation.set(0, 0, 0);

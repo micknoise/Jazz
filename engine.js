@@ -1,12 +1,8 @@
 // engine.js — Jazz variations shared engine
-// Each variation calls window.initJazzEngine(config) after this script loads.
-
 (function () {
   'use strict';
 
   // ── Barycentric wireframe helper ─────────────────────────────────────────────
-  // Converts any geometry to non-indexed and adds barycentric coords so the
-  // fragment shader can draw anti-aliased wireframe lines of controllable width.
   window.addBarycentricCoords = function (geometry) {
     var g = geometry.toNonIndexed();
     var count = g.attributes.position.count;
@@ -27,7 +23,7 @@
     uniform sampler2D uFFT;
     uniform float uDeform;
     uniform float uTime;
-    uniform float uFFTUV; // 0 = use uv.x, 1 = use uv.y
+    uniform float uFFTUV; // 0 = use fract(uv.x*2), 1 = use uv.y
     void main() {
       vBary = barycentric;
       float uvCoord = mix(fract(uv.x * 2.0), uv.y, uFFTUV);
@@ -64,6 +60,7 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 1);
+    // Trails: keep colour buffer between frames — clear only depth each frame
     renderer.autoClear = false;
     document.body.appendChild(renderer.domElement);
 
@@ -72,9 +69,8 @@
     camera.position.copy(camCfg.position || new THREE.Vector3(0, 0, 500));
     if (camCfg.lookAt) camera.lookAt(camCfg.lookAt);
 
-    // Stash initial camera state for reset
-    var initPos   = camera.position.clone();
-    var initQuat  = camera.quaternion.clone();
+    var initPos  = camera.position.clone();
+    var initQuat = camera.quaternion.clone();
 
     window.addEventListener('resize', function () {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -83,9 +79,12 @@
     });
 
     // ── Trail fade quad ──────────────────────────────────────────────────────
+    // Rendered each frame BEFORE the scene to darken the colour buffer,
+    // creating persistence / motion-trail. Depth is not written or tested.
     var fadeScene  = new THREE.Scene();
     var fadeMat    = new THREE.MeshBasicMaterial({
-      color: 0x000000, transparent: true, opacity: trailOpacity, depthTest: false
+      color: 0x000000, transparent: true, opacity: trailOpacity,
+      depthTest: false, depthWrite: false
     });
     fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), fadeMat));
     var fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -104,7 +103,7 @@
       makeUniforms: function (overrides) {
         var base = {
           uFFT:       { value: fftTexture },
-          uDeform:    { value: 1000.0 },
+          uDeform:    { value: 1200.0 },
           uTime:      { value: 0.0 },
           uLineWidth: { value: 2.0 },
           uColor:     { value: new THREE.Color(1, 1, 1) },
@@ -115,17 +114,16 @@
       }
     };
 
-    // ── Initialise variation scene ───────────────────────────────────────────
-    var sceneApi  = cfg.sceneSetup(scene, camera, sharedShaders);
+    // ── Init variation scene ─────────────────────────────────────────────────
+    var sceneApi    = cfg.sceneSetup(scene, camera, sharedShaders);
     var updateScene = sceneApi.update || function () {};
     var resetScene  = sceneApi.reset  || function () {};
     var guiSetup    = sceneApi.gui    || function () {};
 
-    // ── WASD + pointer-lock look ─────────────────────────────────────────────
+    // ── WASD + pointer-lock mouse-look ───────────────────────────────────────
     var keys  = {};
     var pitch = 0, yaw = 0, locked = false;
 
-    // Derive initial pitch/yaw from camera quaternion after lookAt
     var initEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
     pitch = initEuler.x;
     yaw   = initEuler.y;
@@ -183,8 +181,8 @@
       fastFeedbackBase: 0.999, fastFeedbackRange: 0.001,
       fastFreq2Range: 300, fastModIRange: 10000
     };
-    var savedAudio   = Object.assign({}, defaultAudio, cfg.audio || {});
-    var audioParams  = Object.assign({}, savedAudio);
+    var savedAudio  = Object.assign({}, defaultAudio, cfg.audio || {});
+    var audioParams = Object.assign({}, savedAudio);
 
     var REALTIME_KEYS = [
       'sparsity_1','sparsity_2','maxTicksPerBeat',
@@ -263,27 +261,41 @@
       ].join('\n');
     }
 
-    initAudioEngine('https://louismac.github.io/maximilian-js-local').then(function (dspEngine) {
-      maxi = dspEngine;
-      sendRealtimeParams();
-      maxi.setAudioCode(buildDSPCode(audioParams));
-    });
+    // ── Audio / play button ──────────────────────────────────────────────────
+    // ENGINE IS NOT STARTED until the user clicks play.
+    // This guarantees no audio until user gesture, and avoids autoplay issues.
+    var analyser, floatFreqData;
+    var playing = false, engineReady = false;
 
-    // ── Play / stop ──────────────────────────────────────────────────────────
-    var analyser, floatFreqData, playing = false;
     var playBtn = document.getElementById('playButton');
     playBtn.addEventListener('click', function () {
-      if (!maxi) return;
       if (!playing) {
-        maxi.play();
-        playing = true;
-        playBtn.textContent = 'stop';
-        if (!analyser && maxi.audioWorkletNode) {
-          var ctx = maxi.audioWorkletNode.context;
-          analyser = ctx.createAnalyser();
-          analyser.fftSize = FFT_BINS * 2;
-          floatFreqData = new Float32Array(analyser.frequencyBinCount);
-          maxi.audioWorkletNode.connect(analyser);
+        if (!engineReady) {
+          // First click: load WASM engine, set DSP code, start audio
+          playBtn.textContent = 'loading…';
+          playBtn.disabled = true;
+          initAudioEngine('https://louismac.github.io/maximilian-js-local')
+            .then(function (dspEngine) {
+              maxi = dspEngine;
+              sendRealtimeParams();
+              maxi.setAudioCode(buildDSPCode(audioParams));
+              maxi.play();
+              engineReady = true;
+              playing = true;
+              playBtn.textContent = 'stop';
+              playBtn.disabled = false;
+              if (maxi.audioWorkletNode) {
+                var ctx = maxi.audioWorkletNode.context;
+                analyser = ctx.createAnalyser();
+                analyser.fftSize = FFT_BINS * 2;
+                floatFreqData = new Float32Array(analyser.frequencyBinCount);
+                maxi.audioWorkletNode.connect(analyser);
+              }
+            });
+        } else {
+          maxi.audioWorkletNode.context.resume();
+          playing = true;
+          playBtn.textContent = 'stop';
         }
       } else {
         maxi.audioWorkletNode.context.suspend();
@@ -296,6 +308,7 @@
     var resetBtn = document.getElementById('resetButton');
     resetBtn.addEventListener('click', function () {
       camera.position.copy(initPos);
+      camera.quaternion.copy(initQuat);
       pitch = initPitch; yaw = initYaw;
       Object.assign(audioParams, savedAudio);
       sendRealtimeParams();
@@ -338,7 +351,9 @@
     timingF.close(); slowF.close(); fastF.close();
 
     // ── Render loop ──────────────────────────────────────────────────────────
-    var clock = new THREE.Clock();
+    var clock    = new THREE.Clock();
+    var rmsSmooth = 0;
+    window.jazzRMS = 0; // exposed for variation update functions
 
     function draw() {
       var dt      = Math.min(clock.getDelta(), 0.05);
@@ -347,16 +362,39 @@
       updateControls(dt);
 
       if (analyser) {
+        // 1. Convert dB → linear amplitude
         analyser.getFloatFrequencyData(floatFreqData);
+        var peak = 0;
         for (var i = 0; i < FFT_BINS; i++) {
           var db = floatFreqData[i];
-          fftArray[i] = isFinite(db) ? Math.pow(10, db / 20) : 0;
+          fftArray[i] = (isFinite(db) && db > -200) ? Math.pow(10, db / 20) : 0;
+          if (fftArray[i] > peak) peak = fftArray[i];
         }
+
+        // 2. Compute raw RMS before boost (for rotation speed)
+        var rawRms = 0;
+        for (var j = 0; j < FFT_BINS; j++) rawRms += fftArray[j] * fftArray[j];
+        rawRms = Math.sqrt(rawRms / FFT_BINS);
+        rmsSmooth = rmsSmooth * 0.88 + rawRms * 0.12;
+        window.jazzRMS = rmsSmooth;
+
+        // 3. Boost: normalise to peak, add 30% floor so ALL vertices deform,
+        //    then amplify 4× for dramatic effect.
+        if (peak > 0.0001) {
+          var floor4 = peak * 0.30;
+          for (var k = 0; k < FFT_BINS; k++) {
+            fftArray[k] = Math.max(fftArray[k], floor4) * 4.0;
+          }
+        }
+
         fftTexture.needsUpdate = true;
       }
 
       updateScene(fftArray, elapsed, dt);
 
+      // Trail: clear depth only (preserves colour), darken colour with fade quad,
+      // then render scene with a fresh depth buffer.
+      renderer.clearDepth();
       renderer.render(fadeScene, fadeCamera);
       renderer.render(scene, camera);
 

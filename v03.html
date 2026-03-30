@@ -91,8 +91,8 @@
             planeMat.uniforms.uTime.value = elapsed;
             sunMat.uniforms.uTime.value = elapsed;
 
-            // Slow Y-axis rotation of the sun
-            sun.rotation.y += 0.08 * dt;
+            // Slow Y-axis rotation of the sun, boosted by RMS
+            sun.rotation.y += (0.3 + window.jazzRMS * 2.0) * dt;
           },
           reset: function () {
             sun.rotation.set(0, 0, 0);

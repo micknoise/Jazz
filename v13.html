@@ -81,7 +81,8 @@
           update: function (fftArray, elapsed, dt) {
             spheres.forEach(function (s, i) {
               // Each shell has a different rotation phase
-              s.mesh.rotation.x += 0.001 * (i + 1) * dt * 60;
+              s.mesh.rotation.x += (0.001 * (i + 1) + window.jazzRMS * 0.05 * (i + 1)) * dt * 60;
+              s.mesh.rotation.y += (0.002 * (i + 1) + window.jazzRMS * 0.08) * dt * 60;
               s.mat.uniforms.uTime.value = elapsed + i * 1.5;
             });
           },

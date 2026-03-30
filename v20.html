@@ -86,6 +86,7 @@
           update: function (fftArray, elapsed, dt) {
             for (var i = 0; i < ribbons.length; i++) {
               ribbons[i].mat.uniforms.uTime.value = elapsed;
+              ribbons[i].mesh.rotation.z = (-Math.PI / 3 + i * (Math.PI / 9)) + Math.sin(elapsed * 0.4 + i * 0.6) * window.jazzRMS * 0.3;
             }
           },
           reset: function () {

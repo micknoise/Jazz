@@ -81,11 +81,11 @@
             bgMat.uniforms.uTime.value = elapsed;
             fgMat.uniforms.uTime.value = elapsed;
             // Foreground rotates faster
-            fgMesh.rotation.y += dt * 0.6;
-            fgMesh.rotation.x += dt * 0.25;
+            fgMesh.rotation.y += (0.3 + window.jazzRMS * 3.0) * dt;
+            fgMesh.rotation.x += (0.1 + window.jazzRMS * 1.0) * dt;
             // Background rotates slowly
-            bgMesh.rotation.y += dt * 0.1;
-            bgMesh.rotation.x += dt * 0.05;
+            bgMesh.rotation.y += (0.1 + window.jazzRMS * 1.5) * dt;
+            bgMesh.rotation.x += 0.05 * dt;
           },
           reset: function () {
             bgMesh.rotation.set(0, 0, 0);

@@ -64,15 +64,8 @@
           update: function (fftArray, elapsed, dt) {
             mat.uniforms.uTime.value = elapsed;
 
-            // Compute RMS amplitude from FFT bins
-            var rms = 0;
-            for (var i = 0; i < fftArray.length; i++) {
-              rms += fftArray[i] * fftArray[i];
-            }
-            rms = Math.sqrt(rms / fftArray.length);
-
             // Slow rotation driven by RMS amplitude
-            var rotSpeed = 0.05 + rms * 0.4;
+            var rotSpeed = 0.05 + window.jazzRMS * 0.4;
             mesh.rotation.y += rotSpeed * dt;
             mesh.rotation.x += rotSpeed * 0.3 * dt;
           },

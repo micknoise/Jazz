@@ -80,10 +80,10 @@
           update: function (fftArray, elapsed, dt) {
             spheres.forEach(function (s) {
               s.mat.uniforms.uTime.value = elapsed;
-              // Tiny constant drift rotation — different rate per axis per sphere
-              s.mesh.rotation.x += s.cfg.rotX;
-              s.mesh.rotation.y += s.cfg.rotY;
-              s.mesh.rotation.z += s.cfg.rotZ;
+              // Drift rotation scaled by RMS — different rate per axis per sphere
+              s.mesh.rotation.x += (s.cfg.rotX + window.jazzRMS * s.cfg.rotX * 8) * dt * 60;
+              s.mesh.rotation.y += (s.cfg.rotY + window.jazzRMS * s.cfg.rotY * 8) * dt * 60;
+              s.mesh.rotation.z += (s.cfg.rotZ + window.jazzRMS * s.cfg.rotZ * 8) * dt * 60;
             });
           },
           reset: function () {
