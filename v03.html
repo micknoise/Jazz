@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Landscape</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Landscape',
+      trailOpacity: 0.06,
+      camera: {
+        position: new THREE.Vector3(0, 100, 600),
+        lookAt: new THREE.Vector3(0, 0, 0)
+      },
+      bounds: 1200,
+      speed: 120,
+      audio: {
+        sparsity_1: 0.7,
+        sparsity_2: 0.8,
+        tempo: 60,
+        slowFreq2: 60,
+        slowModI: 0.5,
+        fastFreqBase: 100,
+        fastFreqRange: 200,
+        fastModIRange: 3000,
+        positiveFeedbackValue: 1.000002,
+        decayFeedbackValue: 0.9998
+      },
+      sceneSetup: function (scene, camera, ss) {
+        // Ground plane — PlaneGeometry is XY; rotate to lie flat on XZ
+        var planeGeo = addBarycentricCoords(new THREE.PlaneGeometry(3000, 3000, 64, 64));
+        var planeMat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform:    { value: 300.0 },
+            uLineWidth: { value: 1.8 },
+            uFFTUV:     { value: 0.0 }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var plane = new THREE.Mesh(planeGeo, planeMat);
+        // Rotate so the plane is horizontal (normal points up)
+        plane.rotation.x = -Math.PI / 2;
+        plane.position.y = -200;
+        scene.add(plane);
+
+        // Sun sphere at (400, 350, -800) — separate material for high-freq bins
+        var sunGeo = addBarycentricCoords(new THREE.SphereGeometry(80, 16, 16));
+        var sunMat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform:    { value: 500.0 },
+            uLineWidth: { value: 2.0 },
+            uFFTUV:     { value: 0.0 },
+            uColor:     { value: new THREE.Color(1.0, 0.95, 0.8) }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var sun = new THREE.Mesh(sunGeo, sunMat);
+        sun.position.set(400, 350, -800);
+        scene.add(sun);
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            planeMat.uniforms.uTime.value = elapsed;
+            sunMat.uniforms.uTime.value = elapsed;
+
+            // Slow Y-axis rotation of the sun
+            sun.rotation.y += 0.08 * dt;
+          },
+          reset: function () {
+            sun.rotation.set(0, 0, 0);
+          },
+          gui: function (folder, audioParams, sendFn) {
+            folder.add(planeMat.uniforms.uDeform, 'value', 0, 1000, 10).name('Ground deform');
+            folder.add(sunMat.uniforms.uDeform, 'value', 0, 1500, 10).name('Sun deform');
+            folder.add(planeMat.uniforms.uLineWidth, 'value', 0.5, 6, 0.1).name('Line width');
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

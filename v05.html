@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Crystal</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Crystal',
+      trailOpacity: 0.06,
+      camera: {
+        position: new THREE.Vector3(0, 0, 450),
+        lookAt: new THREE.Vector3(0, 0, 0)
+      },
+      bounds: 800,
+      speed: 120,
+      audio: {
+        sparsity_1: 0.3,
+        sparsity_2: 0.35,
+        tempo: 110,
+        maxTicksPerBeat: 12,
+        fastFreqBase: 300,
+        fastFreqRange: 600,
+        fastModIRange: 18000,
+        fastFeedbackRange: 0.005
+      },
+      sceneSetup: function (scene, camera, ss) {
+        // IcosahedronGeometry detail=2 gives a nicely faceted mesh
+        var geo = addBarycentricCoords(new THREE.IcosahedronGeometry(180, 2));
+        var mat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform:    { value: 1200.0 },
+            uLineWidth: { value: 1.5 },
+            uFFTUV:     { value: 0.0 }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var mesh = new THREE.Mesh(geo, mat);
+        scene.add(mesh);
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            mat.uniforms.uTime.value = elapsed;
+
+            // Rotate on all 3 axes at different rates for a tumbling crystal feel
+            mesh.rotation.x += 0.11 * dt;
+            mesh.rotation.y += 0.17 * dt;
+            mesh.rotation.z += 0.07 * dt;
+          },
+          reset: function () {
+            mesh.rotation.set(0, 0, 0);
+          },
+          gui: function (folder, audioParams, sendFn) {
+            folder.add(mat.uniforms.uDeform, 'value', 0, 3000, 10).name('Deform amount');
+            folder.add(mat.uniforms.uLineWidth, 'value', 0.5, 6, 0.1).name('Line width');
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

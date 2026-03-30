@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Cosmos</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Cosmos',
+      trailOpacity: 0.04,
+      camera: {
+        position: new THREE.Vector3(0, 0, 0),
+        lookAt: new THREE.Vector3(0, 0, -1)
+      },
+      bounds: 1200,
+      speed: 180,
+      audio: {
+        sparsity_1: 0.85,
+        sparsity_2: 0.9,
+        tempo: 50,
+        maxTicksPerBeat: 4,
+        fastFreqBase: 80,
+        fastFreqRange: 120,
+        fastModIRange: 2000,
+        positiveFeedbackValue: 1.000001,
+        decayFeedbackValue: 0.9999
+      },
+      sceneSetup: function (scene, camera, ss) {
+        // 5 spheres: sizes, positions, deform amounts, rotation rates
+        var sphereConfigs = [
+          { radius: 60,  pos: [ 350, -200, -700], deform: 800,  rotX: 0.00017, rotY: 0.00011, rotZ: 0.00007 },
+          { radius: 90,  pos: [-600,  300, -900], deform: 950,  rotX: 0.00009, rotY: 0.00019, rotZ: 0.00013 },
+          { radius: 120, pos: [ 800, -100, -500], deform: 1100, rotX: 0.00021, rotY: 0.00008, rotZ: 0.00016 },
+          { radius: 50,  pos: [-300, -500, -300], deform: 1200, rotX: 0.00013, rotY: 0.00023, rotZ: 0.00005 },
+          { radius: 80,  pos: [ 100,  600, -800], deform: 1050, rotX: 0.00006, rotY: 0.00015, rotZ: 0.00020 }
+        ];
+
+        var spheres = sphereConfigs.map(function (cfg) {
+          var geo = addBarycentricCoords(new THREE.SphereGeometry(cfg.radius, 18, 18));
+          var mat = new THREE.ShaderMaterial({
+            vertexShader: ss.vertexShader,
+            fragmentShader: ss.fragmentShader,
+            uniforms: ss.makeUniforms({
+              uDeform:    { value: cfg.deform },
+              uLineWidth: { value: 2.0 },
+              uFFTUV:     { value: 0.0 }
+            }),
+            transparent: true,
+            depthWrite: false
+          });
+          var mesh = new THREE.Mesh(geo, mat);
+          mesh.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
+          scene.add(mesh);
+          return { mesh: mesh, mat: mat, cfg: cfg };
+        });
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            spheres.forEach(function (s) {
+              s.mat.uniforms.uTime.value = elapsed;
+              // Tiny constant drift rotation — different rate per axis per sphere
+              s.mesh.rotation.x += s.cfg.rotX;
+              s.mesh.rotation.y += s.cfg.rotY;
+              s.mesh.rotation.z += s.cfg.rotZ;
+            });
+          },
+          reset: function () {
+            spheres.forEach(function (s) { s.mesh.rotation.set(0, 0, 0); });
+          },
+          gui: function (folder, audioParams, sendFn) {
+            folder.add(spheres[0].mat.uniforms.uLineWidth, 'value', 0.5, 6, 0.1).name('Line width').onChange(function (v) {
+              spheres.forEach(function (s) { s.mat.uniforms.uLineWidth.value = v; });
+            });
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

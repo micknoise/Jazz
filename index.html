@@ -1,379 +1,236 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <script src="./maximilian.v.0.1.js"></script>
-  <script src="./enable-threads.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
-  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-  <title>Jazz</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jazz — 20 audiovisual sketches</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; }
-    #playButton {
-      position: absolute;
-      top: 16px;
-      left: 16px;
-      z-index: 10;
-      padding: 8px 18px;
-      background: transparent;
-      color: white;
-      border: 1px solid white;
-      font-size: 14px;
-      cursor: pointer;
-      letter-spacing: 0.1em;
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #000;
+      color: #fff;
+      font-family: monospace;
+      min-height: 100vh;
+      padding: 48px 32px 64px;
     }
-    #playButton:hover { background: rgba(255,255,255,0.1); }
+
+    header {
+      margin-bottom: 48px;
+    }
+
+    header h1 {
+      font-size: 36px;
+      font-weight: normal;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    header p {
+      margin-top: 8px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.4);
+      letter-spacing: 0.04em;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    @media (max-width: 1100px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+    @media (max-width: 860px)  { .grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 600px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 380px)  { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      display: block;
+      text-decoration: none;
+      color: #fff;
+      background: #000;
+      padding: 20px 18px 22px;
+      border: 1px solid transparent;
+      transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+      position: relative;
+    }
+
+    .card:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.35);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+      z-index: 1;
+    }
+
+    .card-num {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.25);
+      letter-spacing: 0.1em;
+      margin-bottom: 10px;
+    }
+
+    .card-name {
+      font-size: 16px;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+    }
+
+    .card-desc {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.45);
+      line-height: 1.5;
+      letter-spacing: 0.02em;
+    }
+
+    /* Dim cards that link to unbuilt variations */
+    .card.stub {
+      opacity: 0.35;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    footer {
+      margin-top: 40px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.18);
+      letter-spacing: 0.04em;
+    }
   </style>
 </head>
 <body>
-  <button id="playButton">play</button>
 
-  <script type="text/javascript">
+  <header>
+    <h1>Jazz</h1>
+    <p>20 audiovisual sketches</p>
+  </header>
 
-    // -------------------------------------------------------------------------
-    // Three.js scene
-    // -------------------------------------------------------------------------
-    var renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x000000, 1);
-    document.body.appendChild(renderer.domElement);
+  <div class="grid">
 
-    var scene  = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
-    camera.position.z = 500;
+    <a class="card" href="v01.html">
+      <div class="card-num">01</div>
+      <div class="card-name">Sphere</div>
+      <div class="card-desc">Slow dramatic FM, one pulsing sphere</div>
+    </a>
 
-    window.addEventListener('resize', function() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    <a class="card" href="v02.html">
+      <div class="card-num">02</div>
+      <div class="card-name">Tunnel</div>
+      <div class="card-desc">Frantic rush through a deforming cylinder</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // FFT data texture — updated every frame from the AnalyserNode.
-    // Single-channel Float32; shader reads the R channel as linear amplitude.
-    // -------------------------------------------------------------------------
-    var FFT_BINS    = 256;
-    var fftArray    = new Float32Array(FFT_BINS);
-    var fftTexture  = new THREE.DataTexture(fftArray, FFT_BINS, 1, THREE.RedFormat, THREE.FloatType);
-    fftTexture.magFilter = THREE.NearestFilter;
-    fftTexture.needsUpdate = true;
+    <a class="card" href="v03.html">
+      <div class="card-num">03</div>
+      <div class="card-name">Landscape</div>
+      <div class="card-desc">Lush terrain with a solar orb in the sky</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // Shaders
-    // -------------------------------------------------------------------------
-    var vertexShader = /* glsl */`
-      uniform sampler2D uFFT;     // frequency-magnitude texture (linear amplitude per bin)
-      uniform float     uDeform;  // maximum radial displacement in world units
-      uniform float     uTime;    // elapsed seconds (available for future use)
+    <a class="card" href="v04.html">
+      <div class="card-num">04</div>
+      <div class="card-name">Cosmos</div>
+      <div class="card-desc">Sparse floating spheres in deep space</div>
+    </a>
 
-      void main() {
-        // uv.x goes 0→1 around the sphere's longitude, but 0 and 1 are the same
-        // seam point — so the sphere has one half at u=0..0.5 and the mirror
-        // half at u=0.5..1.  Cycling twice with fract(uv.x * 2.0) maps both
-        // halves to the full FFT range, so the whole sphere deforms uniformly.
-        float mag      = texture2D(uFFT, vec2(fract(uv.x * 2.0), 0.5)).r;
-        vec3  displaced = position + normal * mag * uDeform;
+    <a class="card" href="v05.html">
+      <div class="card-num">05</div>
+      <div class="card-name">Crystal</div>
+      <div class="card-desc">Faceted icosahedron, sharp and detailed</div>
+    </a>
 
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
-      }
-    `;
+    <a class="card" href="v06.html">
+      <div class="card-num">06</div>
+      <div class="card-name">Torus Knot</div>
+      <div class="card-desc">Intricate knotted geometry, complex tone</div>
+    </a>
 
-    var fragmentShader = /* glsl */`
-      void main() {
-        gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-      }
-    `;
+    <a class="card" href="v07.html">
+      <div class="card-num">07</div>
+      <div class="card-name">Rings</div>
+      <div class="card-desc">Concentric rings, slow orbital drift</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // Sphere mesh — geometry matches original dim=22 segment count
-    // -------------------------------------------------------------------------
-    var geometry = new THREE.SphereGeometry(200, 22, 22);
-    var material = new THREE.ShaderMaterial({
-      uniforms: {
-        uFFT:    { value: fftTexture },
-        uDeform: { value: 1000.0 },  // deform scale; linear amplitude vals can exceed 1
-        uTime:   { value: 0.0 }
-      },
-      vertexShader:   vertexShader,
-      fragmentShader: fragmentShader,
-      wireframe:      true
-    });
+    <a class="card" href="v08.html">
+      <div class="card-num">08</div>
+      <div class="card-name">Abyss</div>
+      <div class="card-desc">Camera above, looking into descending rings</div>
+    </a>
 
-    var sphere = new THREE.Mesh(geometry, material);
-    scene.add(sphere);
+    <a class="card" href="v09.html">
+      <div class="card-num">09</div>
+      <div class="card-name">Helix</div>
+      <div class="card-desc">Tube coiled in a DNA helix, medium pace</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // Audio analysis state
-    // -------------------------------------------------------------------------
-    var analyser      = null;
-    var floatFreqData = null;
-    var timeData      = null;
-    var smoothedA    = 0;   // proxy for _a envelope — drives X rotation rate
-    var smoothedB    = 0;   // proxy for _b envelope — drives Y rotation rate
+    <a class="card" href="v10.html">
+      <div class="card-num">10</div>
+      <div class="card-name">Grid</div>
+      <div class="card-desc">Infinite ground grid, fast city pulse</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // Event generator parameters
-    // Real-time params are pushed to the audio thread via maxi.send/Input.
-    // Init-only params are baked into the DSP code once at startup.
-    // -------------------------------------------------------------------------
-    var audioParams = {
-      // init-only: synthesis envelope starting state
-      initialA:                  0.5,
-      initialB:                  0.5,
-      initialFeedback:           0.9999,
-      initialBFeedback:          0.9999,
-      initialFreq:               350,
-      initialFreq2:              50,
-      initialModI:               650,
-      // init-only: clock
-      tempo:                     90,
-      ticksPerBeat:              4,
-      // real-time: event generator control
-      sparsity_1:                0.4,
-      sparsity_2:                0.5,
-      maxTicksPerBeat:           8,
-      slowFreq2:                 100,
-      slowModI:                  1,
-      positiveFeedbackThreshold: 0.75,
-      positiveFeedbackValue:     1.00001,
-      decayFeedbackValue:        0.999,
-      fastFreqBase:              250,
-      fastFreqRange:             350,
-      fastFeedbackBase:          0.999,
-      fastFeedbackRange:         0.001,
-      fastFreq2Range:            300,
-      fastModIRange:             10000
-    };
+    <a class="card" href="v11.html">
+      <div class="card-num">11</div>
+      <div class="card-name">Forest</div>
+      <div class="card-desc">Columns of vertical tubes, cathedral slow</div>
+    </a>
 
-    // Index order must exactly match the reads inside play() in buildDSPCode
-    var REALTIME_PARAM_KEYS = [
-      'sparsity_1',                 // p[0]
-      'sparsity_2',                 // p[1]
-      'maxTicksPerBeat',            // p[2]
-      'slowFreq2',                  // p[3]
-      'slowModI',                   // p[4]
-      'positiveFeedbackThreshold',  // p[5]
-      'positiveFeedbackValue',      // p[6]
-      'decayFeedbackValue',         // p[7]
-      'fastFreqBase',               // p[8]
-      'fastFreqRange',              // p[9]
-      'fastFeedbackBase',           // p[10]
-      'fastFeedbackRange',          // p[11]
-      'fastFreq2Range',             // p[12]
-      'fastModIRange'               // p[13]
-    ];
+    <a class="card" href="v12.html">
+      <div class="card-num">12</div>
+      <div class="card-name">Vortex</div>
+      <div class="card-desc">Fast spinning torus, hypnotic</div>
+    </a>
 
-    function sendRealtimeParams() {
-      if (!maxi) return;
-      maxi.send('params', REALTIME_PARAM_KEYS.map(function(k) { return audioParams[k]; }));
-    }
+    <a class="card" href="v13.html">
+      <div class="card-num">13</div>
+      <div class="card-name">Pulse</div>
+      <div class="card-desc">Concentric sphere shells expanding</div>
+    </a>
 
-    // Update any subset of audioParams without restarting synthesis.
-    // Real-time params take effect within the next audio block (~3 ms).
-    function updateParams(changes) {
-      Object.assign(audioParams, changes);
-      sendRealtimeParams();
-    }
+    <a class="card" href="v14.html">
+      <div class="card-num">14</div>
+      <div class="card-name">Rift</div>
+      <div class="card-desc">Two canyon walls of geometry, dramatic</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // DSP code — built once at startup; real-time params arrive via Input
-    // -------------------------------------------------------------------------
-    function buildDSPCode(p) {
-      return [
-        'var myOsc  = new Maximilian.maxiOsc();',
-        'var myOsc2 = new Maximilian.maxiOsc();',
-        'var myOsc3 = new Maximilian.maxiOsc();',
-        '',
-        'var paramsIn = new Input("params");',
-        '',
-        'var c = new Maximilian.maxiClock();',
-        'var d = new Maximilian.maxiClock();',
-        'c.setTempo('        + p.tempo        + ');',
-        'c.setTicksPerBeat(' + p.ticksPerBeat + ');',
-        'd.setTempo('        + p.tempo        + ');',
-        '',
-        'var _a        = ' + p.initialA        + ';',
-        'var _b        = ' + p.initialB        + ';',
-        'var _feedback  = ' + p.initialFeedback  + ';',
-        'var _bFeedback = ' + p.initialBFeedback + ';',
-        'var _freq      = ' + p.initialFreq      + ';',
-        'var _freq2     = ' + p.initialFreq2     + ';',
-        'var _modI      = ' + p.initialModI      + ';',
-        '',
-        'var sparsity_1                = ' + p.sparsity_1                + ';',
-        'var sparsity_2                = ' + p.sparsity_2                + ';',
-        'var maxTicksPerBeat           = ' + p.maxTicksPerBeat           + ';',
-        'var slowFreq2                 = ' + p.slowFreq2                 + ';',
-        'var slowModI                  = ' + p.slowModI                  + ';',
-        'var positiveFeedbackThreshold = ' + p.positiveFeedbackThreshold + ';',
-        'var positiveFeedbackValue     = ' + p.positiveFeedbackValue     + ';',
-        'var decayFeedbackValue        = ' + p.decayFeedbackValue        + ';',
-        'var fastFreqBase              = ' + p.fastFreqBase              + ';',
-        'var fastFreqRange             = ' + p.fastFreqRange             + ';',
-        'var fastFeedbackBase          = ' + p.fastFeedbackBase          + ';',
-        'var fastFeedbackRange         = ' + p.fastFeedbackRange         + ';',
-        'var fastFreq2Range            = ' + p.fastFreq2Range            + ';',
-        'var fastModIRange             = ' + p.fastModIRange             + ';',
-        '',
-        'function play() {',
-        '  var p = paramsIn.getValue();',
-        '  if (p) {',
-        '    sparsity_1                = p[0];',
-        '    sparsity_2                = p[1];',
-        '    maxTicksPerBeat           = p[2];',
-        '    slowFreq2                 = p[3];',
-        '    slowModI                  = p[4];',
-        '    positiveFeedbackThreshold = p[5];',
-        '    positiveFeedbackValue     = p[6];',
-        '    decayFeedbackValue        = p[7];',
-        '    fastFreqBase              = p[8];',
-        '    fastFreqRange             = p[9];',
-        '    fastFeedbackBase          = p[10];',
-        '    fastFeedbackRange         = p[11];',
-        '    fastFreq2Range            = p[12];',
-        '    fastModIRange             = p[13];',
-        '  }',
-        '',
-        '  c.ticker();',
-        '  d.ticker();',
-        '',
-        '  if (d.tick && Math.random() > sparsity_1) {',
-        '    c.setTicksPerBeat(Math.floor(1 + Math.random() * maxTicksPerBeat));',
-        '    _a = 1.0;',
-        '    _b = 1.0;',
-        '    _bFeedback = Math.random() > positiveFeedbackThreshold',
-        '      ? positiveFeedbackValue',
-        '      : decayFeedbackValue;',
-        '    _freq2 = slowFreq2;',
-        '    _modI  = slowModI;',
-        '  }',
-        '  if (c.tick && Math.random() > sparsity_2 && !d.tick) {',
-        '    _freq      = fastFreqBase + (Math.random() * fastFreqRange);',
-        '    _a         = 1.0;',
-        '    _b         = 1.0;',
-        '    _feedback  = fastFeedbackBase + (Math.random() * fastFeedbackRange);',
-        '    _bFeedback = fastFeedbackBase + (Math.random() * fastFeedbackRange);',
-        '    _freq2     = Math.random() * fastFreq2Range;',
-        '    _modI      = Math.random() * fastModIRange;',
-        '  }',
-        '',
-        '  _a *= _feedback;',
-        '  _b *= _bFeedback;',
-        '',
-        '  return myOsc.sinewave((_freq * _b) + (myOsc2.sinewave(_freq2) * _modI)) * _a;',
-        '}'
-      ].join('\n');
-    }
+    <a class="card" href="v15.html">
+      <div class="card-num">15</div>
+      <div class="card-name">Cathedral</div>
+      <div class="card-desc">Wireframe box room, reverberant</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // Audio engine
-    // -------------------------------------------------------------------------
-    var maxi;
-    initAudioEngine('https://louismac.github.io/maximilian-js-local').then(function(dspEngine) {
-      maxi = dspEngine;
-      sendRealtimeParams();                         // seed buffer before DSP init
-      maxi.setAudioCode(buildDSPCode(audioParams)); // called once — never again
-    });
+    <a class="card" href="v16.html">
+      <div class="card-num">16</div>
+      <div class="card-name">Ocean</div>
+      <div class="card-desc">Slow rolling plane, liquid ambience</div>
+    </a>
 
-    var playing    = false;
-    var playButton = document.getElementById('playButton');
-    playButton.addEventListener('click', function() {
-      if (!maxi) return;
-      if (!playing) {
-        maxi.play();
-        playing = true;
-        playButton.textContent = 'stop';
-        if (!analyser && maxi.audioWorkletNode) {
-          var audioCtx  = maxi.audioWorkletNode.context;
-          analyser      = audioCtx.createAnalyser();
-          analyser.fftSize = FFT_BINS * 2; // frequencyBinCount = FFT_BINS
-          floatFreqData = new Float32Array(analyser.frequencyBinCount);
-          timeData      = new Float32Array(analyser.fftSize);
-          maxi.audioWorkletNode.connect(analyser);
-        }
-      } else {
-        maxi.audioWorkletNode.context.suspend();
-        playing = false;
-        playButton.textContent = 'play';
-      }
-    });
+    <a class="card" href="v17.html">
+      <div class="card-num">17</div>
+      <div class="card-name">Eclipse</div>
+      <div class="card-desc">Two spheres, one foreground one distant</div>
+    </a>
 
-    // -------------------------------------------------------------------------
-    // Render loop
-    // -------------------------------------------------------------------------
-    var clock = new THREE.Clock();
+    <a class="card" href="v18.html">
+      <div class="card-num">18</div>
+      <div class="card-name">Corona</div>
+      <div class="card-desc">Explosive spiky sphere deformation</div>
+    </a>
 
-    function draw() {
-      var elapsed = clock.getElapsedTime();
-      material.uniforms.uTime.value = elapsed;
+    <a class="card" href="v19.html">
+      <div class="card-num">19</div>
+      <div class="card-name">Wormhole</div>
+      <div class="card-desc">Series of rings forming a portal</div>
+    </a>
 
-      if (analyser) {
-        // Update FFT texture — convert dB → linear amplitude so large FM
-        // magnitudes produce the same explosive deformation as the original.
-        analyser.getFloatFrequencyData(floatFreqData);
-        for (var i = 0; i < FFT_BINS; i++) {
-          var db = floatFreqData[i];
-          fftArray[i] = isFinite(db) ? Math.pow(10, db / 20) : 0;
-        }
-        fftTexture.needsUpdate = true;
+    <a class="card" href="v20.html">
+      <div class="card-num">20</div>
+      <div class="card-name">Aurora</div>
+      <div class="card-desc">Ribbon arcs sweeping overhead</div>
+    </a>
 
-        // RMS amplitude for rotation proxy
-        analyser.getFloatTimeDomainData(timeData);
-        var rms = 0;
-        for (var k = 0; k < timeData.length; k++) rms += timeData[k] * timeData[k];
-        rms = Math.sqrt(rms / timeData.length);
+  </div>
 
-        smoothedA = smoothedA * 0.90 + rms * 0.10;
-        smoothedB = smoothedB * 0.95 + rms * 0.05;
-      }
+  <footer>Jazz — FM synthesis + Three.js wireframe geometry</footer>
 
-      // Accumulate rotation — same a/10, b/15 scaling as the original
-      sphere.rotation.x += smoothedA / 10;
-      sphere.rotation.y += smoothedB / 15;
-
-      renderer.render(scene, camera);
-      requestAnimationFrame(draw);
-    }
-
-    requestAnimationFrame(draw);
-
-    // -------------------------------------------------------------------------
-    // GUI — lil-gui (Three.js's built-in parameter controls)
-    // Each audio control mutates audioParams directly; onChange fires
-    // sendRealtimeParams() to push all current values to the ring buffer.
-    // Visual controls update Three.js uniforms directly.
-    // -------------------------------------------------------------------------
-    var visualParams = { uDeform: material.uniforms.uDeform.value };
-
-    var gui = new lil.GUI({ title: 'Jazz' });
-
-    var timingFolder = gui.addFolder('Timing');
-    timingFolder.add(audioParams, 'sparsity_1',       0,   1,   0.01).name('Slow event threshold').onChange(sendRealtimeParams);
-    timingFolder.add(audioParams, 'sparsity_2',       0,   1,   0.01).name('Fast event threshold').onChange(sendRealtimeParams);
-    timingFolder.add(audioParams, 'maxTicksPerBeat',  1,  16,   1   ).name('Max subdivisions')    .onChange(sendRealtimeParams);
-
-    var slowFolder = gui.addFolder('Slow Events');
-    slowFolder.add(audioParams, 'slowFreq2',                 1, 2000, 1      ).name('Modulator freq (Hz)')  .onChange(sendRealtimeParams);
-    slowFolder.add(audioParams, 'slowModI',                  0,  100, 0.1    ).name('Mod index')             .onChange(sendRealtimeParams);
-    slowFolder.add(audioParams, 'positiveFeedbackThreshold', 0,    1, 0.01   ).name('Growth probability')   .onChange(sendRealtimeParams);
-    slowFolder.add(audioParams, 'positiveFeedbackValue',     1, 1.001, 0.00001).name('Growth rate')          .onChange(sendRealtimeParams);
-    slowFolder.add(audioParams, 'decayFeedbackValue',      0.9,    1, 0.0001 ).name('Decay rate')            .onChange(sendRealtimeParams);
-
-    var fastFolder = gui.addFolder('Fast Events');
-    fastFolder.add(audioParams, 'fastFreqBase',     0, 2000,    1).name('Carrier freq base (Hz)') .onChange(sendRealtimeParams);
-    fastFolder.add(audioParams, 'fastFreqRange',    0, 2000,    1).name('Carrier freq range (Hz)').onChange(sendRealtimeParams);
-    fastFolder.add(audioParams, 'fastFeedbackBase', 0.99, 1, 0.0001).name('Feedback base')        .onChange(sendRealtimeParams);
-    fastFolder.add(audioParams, 'fastFeedbackRange', 0, 0.01, 0.00001).name('Feedback range')     .onChange(sendRealtimeParams);
-    fastFolder.add(audioParams, 'fastFreq2Range',   0, 1000,    1).name('Modulator freq range (Hz)').onChange(sendRealtimeParams);
-    fastFolder.add(audioParams, 'fastModIRange',    0, 20000,   1).name('Mod index range')         .onChange(sendRealtimeParams);
-
-    var visualFolder = gui.addFolder('Visuals');
-    visualFolder.add(visualParams, 'uDeform', 0, 3000, 1).name('Deform depth').onChange(function() {
-      material.uniforms.uDeform.value = visualParams.uDeform;
-    });
-
-  </script>
 </body>
 </html>

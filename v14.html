@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Rift</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Rift',
+      trailOpacity: 0.07,
+      camera: {
+        position: new THREE.Vector3(0, 100, 800),
+        lookAt: new THREE.Vector3(0, 0, 0)
+      },
+      bounds: 800,
+      speed: 150,
+      audio: {
+        sparsity_1: 0.4,
+        sparsity_2: 0.45,
+        tempo: 100,
+        fastFreqBase: 300,
+        fastFreqRange: 700,
+        fastModIRange: 15000,
+        positiveFeedbackValue: 1.00002,
+        decayFeedbackValue: 0.997
+      },
+      sceneSetup: function (scene, camera, ss) {
+        var meshes = [];
+
+        function makeWallMat(deformVal, color) {
+          return new THREE.ShaderMaterial({
+            vertexShader: ss.vertexShader,
+            fragmentShader: ss.fragmentShader,
+            uniforms: ss.makeUniforms({
+              uDeform: { value: deformVal },
+              uColor: { value: new THREE.Color(color[0], color[1], color[2]) },
+              uFFTUV: { value: 0.0 }
+            }),
+            transparent: true,
+            depthWrite: false,
+            side: THREE.DoubleSide
+          });
+        }
+
+        // Left canyon wall: position (-250,0,0), rotation.z = -PI/4
+        var leftGeo = addBarycentricCoords(new THREE.PlaneGeometry(500, 2000, 20, 80));
+        var leftMat = makeWallMat(800, [0.9, 0.6, 0.3]);
+        var leftWall = new THREE.Mesh(leftGeo, leftMat);
+        leftWall.position.set(-250, 0, 0);
+        leftWall.rotation.z = -Math.PI / 4;
+        scene.add(leftWall);
+        meshes.push({ mesh: leftWall, mat: leftMat });
+
+        // Right canyon wall: position (250,0,0), rotation.z = PI/4
+        var rightGeo = addBarycentricCoords(new THREE.PlaneGeometry(500, 2000, 20, 80));
+        var rightMat = makeWallMat(800, [0.7, 0.4, 0.2]);
+        var rightWall = new THREE.Mesh(rightGeo, rightMat);
+        rightWall.position.set(250, 0, 0);
+        rightWall.rotation.z = Math.PI / 4;
+        scene.add(rightWall);
+        meshes.push({ mesh: rightWall, mat: rightMat });
+
+        // Thin floor: y=-300, rotation.x=-PI/2
+        var floorGeo = addBarycentricCoords(new THREE.PlaneGeometry(500, 2000, 20, 20));
+        var floorMat = makeWallMat(400, [0.5, 0.35, 0.2]);
+        var floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.position.set(0, -300, 0);
+        floor.rotation.x = -Math.PI / 2;
+        scene.add(floor);
+        meshes.push({ mesh: floor, mat: floorMat });
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            meshes.forEach(function (item, i) {
+              item.mat.uniforms.uTime.value = elapsed + i * 0.7;
+            });
+          },
+          reset: function () {
+            meshes.forEach(function (item) {
+              item.mat.uniforms.uTime.value = 0;
+            });
+          },
+          gui: function (folder, audioParams, sendFn) {
+            var params = {
+              leftColor: '#e69950',
+              rightColor: '#b36633',
+              floorColor: '#805633',
+              wallDeform: 800,
+              floorDeform: 400
+            };
+            folder.addColor(params, 'leftColor').name('Left wall').onChange(function (v) {
+              leftMat.uniforms.uColor.value.set(v);
+            });
+            folder.addColor(params, 'rightColor').name('Right wall').onChange(function (v) {
+              rightMat.uniforms.uColor.value.set(v);
+            });
+            folder.addColor(params, 'floorColor').name('Floor').onChange(function (v) {
+              floorMat.uniforms.uColor.value.set(v);
+            });
+            folder.add(params, 'wallDeform', 0, 2000, 1).name('Wall deform').onChange(function (v) {
+              leftMat.uniforms.uDeform.value = v;
+              rightMat.uniforms.uDeform.value = v;
+            });
+            folder.add(params, 'floorDeform', 0, 1000, 1).name('Floor deform').onChange(function (v) {
+              floorMat.uniforms.uDeform.value = v;
+            });
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Grid</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Grid',
+      trailOpacity: 0.12,
+      camera: {
+        position: new THREE.Vector3(0, 0, 600)
+      },
+      bounds: 1200,
+      speed: 200,
+      audio: {
+        sparsity_1: 0.15,
+        sparsity_2: 0.2,
+        tempo: 130,
+        maxTicksPerBeat: 16,
+        fastFreqBase: 500,
+        fastFreqRange: 1000,
+        fastModIRange: 20000,
+        fastFeedbackBase: 0.998,
+        fastFeedbackRange: 0.002,
+        decayFeedbackValue: 0.995
+      },
+      sceneSetup: function (scene, camera, ss) {
+        // ── Plane ────────────────────────────────────────────────────────────
+        var planeGeo = addBarycentricCoords(
+          new THREE.PlaneGeometry(4000, 4000, 40, 40)
+        );
+        var planeUniforms = ss.makeUniforms({
+          uDeform:    { value: 400.0 },
+          uLineWidth: { value: 1.5 },
+          uFFTUV:     { value: 1.0 }   // use uv.y for plane deformation
+        });
+        var planeMat = new THREE.ShaderMaterial({
+          uniforms:       planeUniforms,
+          vertexShader:   ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          transparent:    true,
+          depthWrite:     false
+        });
+        var plane = new THREE.Mesh(planeGeo, planeMat);
+        plane.rotation.x = -Math.PI / 2;
+        plane.position.y = -150;
+        scene.add(plane);
+
+        // ── Columns ──────────────────────────────────────────────────────────
+        var colPositions = [
+          { x: -600, z: -400 }, { x: -200, z: -700 }, { x:  300, z: -500 },
+          { x:  700, z: -200 }, { x: -800, z:  200 }, { x: -400, z:  400 },
+          { x:  100, z:  700 }, { x:  600, z:  500 }, { x: -100, z: -200 },
+          { x:  400, z:  100 }, { x: -700, z:  600 }, { x:  200, z: -800 }
+        ];
+
+        var colUniforms = ss.makeUniforms({
+          uDeform:    { value: 300.0 },
+          uLineWidth: { value: 2.0 }
+        });
+        var colMat = new THREE.ShaderMaterial({
+          uniforms:       colUniforms,
+          vertexShader:   ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          transparent:    true,
+          depthWrite:     false
+        });
+
+        var columns = colPositions.map(function (pos) {
+          var geo  = addBarycentricCoords(
+            new THREE.BoxGeometry(8, 600, 8)
+          );
+          var mesh = new THREE.Mesh(geo, colMat);
+          mesh.position.set(pos.x, -150 + 300, pos.z); // base at y=-150, centre of 600-tall box
+          scene.add(mesh);
+          return mesh;
+        });
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            planeUniforms.uTime.value = elapsed;
+            colUniforms.uTime.value   = elapsed;
+          },
+          reset: function () {
+            // nothing to reset — positions are fixed
+          },
+          gui: function (folder) {
+            folder.add(planeUniforms.uDeform,    'value', 0, 2000, 10).name('Plane deform');
+            folder.add(planeUniforms.uLineWidth, 'value', 0.5, 5, 0.1).name('Plane line width');
+            folder.add(colUniforms.uDeform,      'value', 0, 1500, 10).name('Column deform');
+            folder.add(colUniforms.uLineWidth,   'value', 0.5, 5, 0.1).name('Column line width');
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Forest</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Forest',
+      trailOpacity: 0.05,
+      camera: {
+        position: new THREE.Vector3(0, 50, 500),
+        lookAt: new THREE.Vector3(0, 50, 0)
+      },
+      bounds: 800,
+      speed: 150,
+      audio: {
+        sparsity_1: 0.65,
+        sparsity_2: 0.7,
+        tempo: 65,
+        maxTicksPerBeat: 6,
+        slowFreq2: 80,
+        slowModI: 0.8,
+        fastFreqBase: 120,
+        fastFreqRange: 180,
+        fastModIRange: 4000,
+        positiveFeedbackValue: 1.000003,
+        decayFeedbackValue: 0.9996
+      },
+      sceneSetup: function (scene, camera, ss) {
+        var columns = [];
+        var spacing = 200;
+        var cols = 4;
+
+        // Build 4x4 grid of columns centered at origin
+        for (var row = 0; row < cols; row++) {
+          for (var col = 0; col < cols; col++) {
+            var x = (col - (cols - 1) / 2) * spacing;
+            var z = (row - (cols - 1) / 2) * spacing;
+
+            var geo = addBarycentricCoords(
+              new THREE.CylinderGeometry(8, 8, 500, 12, 12)
+            );
+            var mat = new THREE.ShaderMaterial({
+              vertexShader: ss.vertexShader,
+              fragmentShader: ss.fragmentShader,
+              uniforms: ss.makeUniforms({
+                uDeform: { value: 600.0 },
+                uColor: { value: new THREE.Color(0.6, 0.9, 0.7) }
+              }),
+              transparent: true,
+              depthWrite: false
+            });
+
+            var mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, 0, z);
+            scene.add(mesh);
+            columns.push(mesh);
+          }
+        }
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            columns.forEach(function (col, i) {
+              col.material.uniforms.uTime.value = elapsed + i * 0.3;
+            });
+          },
+          reset: function () {
+            columns.forEach(function (col) {
+              col.material.uniforms.uTime.value = 0;
+            });
+          },
+          gui: function (folder, audioParams, sendFn) {
+            var params = { color: '#99e6b3' };
+            folder.addColor(params, 'color').name('Column color').onChange(function (v) {
+              columns.forEach(function (col) {
+                col.material.uniforms.uColor.value.set(v);
+              });
+            });
+            folder.add(columns[0].material.uniforms.uDeform, 'value', 0, 2000, 1).name('Deform').onChange(function (v) {
+              columns.forEach(function (col) {
+                col.material.uniforms.uDeform.value = v;
+              });
+            });
+            folder.add(columns[0].material.uniforms.uLineWidth, 'value', 0.5, 8, 0.1).name('Line width').onChange(function (v) {
+              columns.forEach(function (col) {
+                col.material.uniforms.uLineWidth.value = v;
+              });
+            });
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

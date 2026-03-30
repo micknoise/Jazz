@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Eclipse</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Eclipse',
+      trailOpacity: 0.05,
+      camera: {
+        position: new THREE.Vector3(0, 0, 500)
+      },
+      bounds: 1000,
+      speed: 150,
+      audio: {
+        sparsity_1: 0.55,
+        sparsity_2: 0.6,
+        tempo: 80,
+        fastFreqBase: 200,
+        fastFreqRange: 400,
+        fastModIRange: 10000,
+        positiveFeedbackValue: 1.000004,
+        decayFeedbackValue: 0.9996
+      },
+      sceneSetup: function (scene, camera, ss) {
+        // Background sphere
+        var bgGeo = addBarycentricCoords(new THREE.SphereGeometry(300, 24, 24));
+        var bgMat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform: { value: 600.0 }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var bgMesh = new THREE.Mesh(bgGeo, bgMat);
+        bgMesh.position.set(0, 0, -800);
+        scene.add(bgMesh);
+
+        // Foreground sphere
+        var fgGeo = addBarycentricCoords(new THREE.SphereGeometry(160, 18, 18));
+        var fgMat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform: { value: 1200.0 }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var fgMesh = new THREE.Mesh(fgGeo, fgMat);
+        fgMesh.position.set(0, 0, 200);
+        scene.add(fgMesh);
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            bgMat.uniforms.uTime.value = elapsed;
+            fgMat.uniforms.uTime.value = elapsed;
+            // Foreground rotates faster
+            fgMesh.rotation.y += dt * 0.6;
+            fgMesh.rotation.x += dt * 0.25;
+            // Background rotates slowly
+            bgMesh.rotation.y += dt * 0.1;
+            bgMesh.rotation.x += dt * 0.05;
+          },
+          reset: function () {
+            bgMesh.rotation.set(0, 0, 0);
+            fgMesh.rotation.set(0, 0, 0);
+          },
+          gui: function (folder) {
+            folder.add(bgMat.uniforms.uDeform, 'value', 0, 2000, 1).name('BG deform');
+            folder.add(fgMat.uniforms.uDeform, 'value', 0, 3000, 1).name('FG deform');
+            folder.add(bgMat.uniforms.uLineWidth, 'value', 0.5, 6, 0.1).name('Line width');
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Cathedral</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Cathedral',
+      trailOpacity: 0.04,
+      camera: {
+        position: new THREE.Vector3(0, 0, 0)
+      },
+      bounds: 350,
+      speed: 100,
+      audio: {
+        sparsity_1: 0.6,
+        sparsity_2: 0.65,
+        tempo: 70,
+        maxTicksPerBeat: 6,
+        slowFreq2: 90,
+        slowModI: 1.5,
+        fastFreqBase: 150,
+        fastFreqRange: 250,
+        fastModIRange: 6000,
+        positiveFeedbackValue: 1.000003,
+        decayFeedbackValue: 0.9994
+      },
+      sceneSetup: function (scene, camera, ss) {
+        var panels = [];
+
+        // Face definitions: [position xyz, rotationAxis, rotationAngle, label]
+        // All planes use BackSide so the inward-facing normal deforms inward
+        var faceConfigs = [
+          // floor: y=-400, rotated so face points upward (normal toward +Y = into room)
+          { pos: [0, -400, 0], rx: -Math.PI / 2, ry: 0, color: [0.7, 0.6, 0.5] },
+          // ceiling: y=400, rotated so face points downward (normal toward -Y = into room)
+          { pos: [0,  400, 0], rx:  Math.PI / 2, ry: 0, color: [0.7, 0.6, 0.5] },
+          // front wall: z=-400, default orientation (normal +Z = toward camera/into room)
+          { pos: [0, 0, -400], rx: 0, ry: 0,           color: [0.5, 0.6, 0.8] },
+          // back wall: z=400, rotated 180 on Y so normal points inward (-Z)
+          { pos: [0, 0,  400], rx: 0, ry: Math.PI,     color: [0.5, 0.6, 0.8] },
+          // left wall: x=-400, rotated so normal points inward (+X)
+          { pos: [-400, 0, 0], rx: 0, ry:  Math.PI / 2, color: [0.6, 0.5, 0.75] },
+          // right wall: x=400, rotated so normal points inward (-X)
+          { pos: [ 400, 0, 0], rx: 0, ry: -Math.PI / 2, color: [0.6, 0.5, 0.75] }
+        ];
+
+        faceConfigs.forEach(function (cfg, i) {
+          var geo = addBarycentricCoords(new THREE.PlaneGeometry(800, 800, 20, 20));
+          var col = new THREE.Color(cfg.color[0], cfg.color[1], cfg.color[2]);
+
+          var mat = new THREE.ShaderMaterial({
+            vertexShader: ss.vertexShader,
+            fragmentShader: ss.fragmentShader,
+            uniforms: ss.makeUniforms({
+              uDeform: { value: 600.0 },
+              uColor: { value: col },
+              uFFTUV: { value: 0.0 }
+            }),
+            transparent: true,
+            depthWrite: false,
+            side: THREE.BackSide   // Normals point inward = deform inward into room
+          });
+
+          var mesh = new THREE.Mesh(geo, mat);
+          mesh.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
+          mesh.rotation.x = cfg.rx;
+          mesh.rotation.y = cfg.ry;
+          scene.add(mesh);
+          panels.push({ mesh: mesh, mat: mat });
+        });
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            panels.forEach(function (p, i) {
+              p.mat.uniforms.uTime.value = elapsed + i * 0.5;
+            });
+          },
+          reset: function () {
+            panels.forEach(function (p) {
+              p.mat.uniforms.uTime.value = 0;
+            });
+          },
+          gui: function (folder, audioParams, sendFn) {
+            var params = {
+              floorCeilingColor: '#b39980',
+              wallColor: '#8099cc',
+              sideColor: '#9980bf',
+              deform: 600,
+              lineWidth: 2
+            };
+
+            folder.addColor(params, 'floorCeilingColor').name('Floor/Ceiling').onChange(function (v) {
+              [0, 1].forEach(function (i) { panels[i].mat.uniforms.uColor.value.set(v); });
+            });
+            folder.addColor(params, 'wallColor').name('Front/Back').onChange(function (v) {
+              [2, 3].forEach(function (i) { panels[i].mat.uniforms.uColor.value.set(v); });
+            });
+            folder.addColor(params, 'sideColor').name('Left/Right').onChange(function (v) {
+              [4, 5].forEach(function (i) { panels[i].mat.uniforms.uColor.value.set(v); });
+            });
+            folder.add(params, 'deform', 0, 2000, 1).name('Deform').onChange(function (v) {
+              panels.forEach(function (p) { p.mat.uniforms.uDeform.value = v; });
+            });
+            folder.add(params, 'lineWidth', 0.5, 8, 0.1).name('Line width').onChange(function (v) {
+              panels.forEach(function (p) { p.mat.uniforms.uLineWidth.value = v; });
+            });
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>

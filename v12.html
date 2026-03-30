@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Vortex</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <script>
+    initJazzEngine({
+      title: 'Vortex',
+      trailOpacity: 0.1,
+      camera: {
+        position: new THREE.Vector3(0, 0, 400)
+      },
+      bounds: 800,
+      speed: 150,
+      audio: {
+        sparsity_1: 0.2,
+        sparsity_2: 0.25,
+        tempo: 120,
+        maxTicksPerBeat: 16,
+        fastFreqBase: 300,
+        fastFreqRange: 600,
+        fastModIRange: 18000,
+        decayFeedbackValue: 0.996
+      },
+      sceneSetup: function (scene, camera, ss) {
+        // Outer torus
+        var outerGeo = addBarycentricCoords(
+          new THREE.TorusGeometry(220, 30, 16, 100)
+        );
+        var outerMat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform: { value: 1200.0 },
+            uColor: { value: new THREE.Color(0.8, 0.4, 1.0) }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var outerTorus = new THREE.Mesh(outerGeo, outerMat);
+        scene.add(outerTorus);
+
+        // Inner torus spinning opposite direction
+        var innerGeo = addBarycentricCoords(
+          new THREE.TorusGeometry(110, 15, 16, 60)
+        );
+        var innerMat = new THREE.ShaderMaterial({
+          vertexShader: ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({
+            uDeform: { value: 1200.0 },
+            uColor: { value: new THREE.Color(0.4, 0.8, 1.0) }
+          }),
+          transparent: true,
+          depthWrite: false
+        });
+        var innerTorus = new THREE.Mesh(innerGeo, innerMat);
+        scene.add(innerTorus);
+
+        return {
+          update: function (fftArray, elapsed, dt) {
+            // Outer torus: fast Z spin, slow X spin
+            outerTorus.rotation.z += 0.02 * dt * 60;
+            outerTorus.rotation.x += 0.005 * dt * 60;
+
+            // Inner torus: opposite direction
+            innerTorus.rotation.z -= 0.02 * dt * 60;
+            innerTorus.rotation.x -= 0.005 * dt * 60;
+
+            outerMat.uniforms.uTime.value = elapsed;
+            innerMat.uniforms.uTime.value = elapsed;
+          },
+          reset: function () {
+            outerTorus.rotation.set(0, 0, 0);
+            innerTorus.rotation.set(0, 0, 0);
+            outerMat.uniforms.uTime.value = 0;
+            innerMat.uniforms.uTime.value = 0;
+          },
+          gui: function (folder, audioParams, sendFn) {
+            var params = {
+              outerColor: '#cc66ff',
+              innerColor: '#66ccff',
+              deform: 1200
+            };
+            folder.addColor(params, 'outerColor').name('Outer color').onChange(function (v) {
+              outerMat.uniforms.uColor.value.set(v);
+            });
+            folder.addColor(params, 'innerColor').name('Inner color').onChange(function (v) {
+              innerMat.uniforms.uColor.value.set(v);
+            });
+            folder.add(params, 'deform', 0, 3000, 1).name('Deform').onChange(function (v) {
+              outerMat.uniforms.uDeform.value = v;
+              innerMat.uniforms.uDeform.value = v;
+            });
+          }
+        };
+      }
+    });
+  </script>
+</body>
+</html>
