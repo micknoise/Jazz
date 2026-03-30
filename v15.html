@@ -76,9 +76,9 @@
             vertexShader: ss.vertexShader,
             fragmentShader: ss.fragmentShader,
             uniforms: ss.makeUniforms({
-              uDeform: { value: 600.0 },
+              uDeform: { value: 1000.0 },
               uColor: { value: col },
-              uFFTUV: { value: 0.0 }
+              uFFTUV: { value: 0.5 }
             }),
             transparent: true,
             depthWrite: false,
@@ -122,7 +122,7 @@
             folder.addColor(params, 'sideColor').name('Left/Right').onChange(function (v) {
               [4, 5].forEach(function (i) { panels[i].mat.uniforms.uColor.value.set(v); });
             });
-            folder.add(params, 'deform', 0, 2000, 1).name('Deform').onChange(function (v) {
+            folder.add(params, 'deform', 0, 3000, 1).name('Deform').onChange(function (v) {
               panels.forEach(function (p) { p.mat.uniforms.uDeform.value = v; });
             });
             folder.add(params, 'lineWidth', 0.5, 8, 0.1).name('Line width').onChange(function (v) {

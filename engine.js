@@ -26,7 +26,7 @@
     uniform float uFFTUV; // 0 = use fract(uv.x*2), 1 = use uv.y
     void main() {
       vBary = barycentric;
-      float uvCoord = mix(fract(uv.x * 2.0), uv.y, uFFTUV);
+      float uvCoord = mix(uv.x, uv.y, uFFTUV);
       float mag = clamp(texture2D(uFFT, vec2(uvCoord, 0.5)).r, 0.0, 20.0);
       vec3 displaced = position + normal * mag * uDeform;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
@@ -400,12 +400,12 @@
         // and flip rotation directions once.  The 250 ms cooldown prevents
         // re-triggering while the envelope is still sustained.
         eventCooldown = Math.max(0, eventCooldown - dt);
-        peakBaseline  = peakBaseline * 0.97 + peak * 0.03;
-        if (eventCooldown <= 0 && peak > peakBaseline * 2.5 && peak > 0.04) {
+        peakBaseline  = peakBaseline * 0.99 + peak * 0.01;
+        if (eventCooldown <= 0 && peak > peakBaseline * 1.5 && peak > 0.01) {
           window.jazzRotDir[0] = Math.random() > 0.5 ? 1 : -1;
           window.jazzRotDir[1] = Math.random() > 0.5 ? 1 : -1;
           window.jazzRotDir[2] = Math.random() > 0.5 ? 1 : -1;
-          eventCooldown = 0.25;
+          eventCooldown = 0.4;
         }
 
         // 3. Boost: normalise to peak, add 30% floor so ALL vertices deform,

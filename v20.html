@@ -67,9 +67,9 @@
             vertexShader: ss.vertexShader,
             fragmentShader: ss.fragmentShader,
             uniforms: ss.makeUniforms({
-              uDeform: { value: 400.0 },
+              uDeform: { value: 800.0 },
               uColor: { value: new THREE.Color(c[0], c[1], c[2]) },
-              uFFTUV: { value: 0.0 }
+              uFFTUV: { value: 0.5 }
             }),
             transparent: true,
             depthWrite: false

@@ -53,9 +53,9 @@
           new THREE.PlaneGeometry(4000, 4000, 40, 40)
         );
         var planeUniforms = ss.makeUniforms({
-          uDeform:    { value: 400.0 },
+          uDeform:    { value: 900.0 },
           uLineWidth: { value: 1.5 },
-          uFFTUV:     { value: 1.0 }   // use uv.y for plane deformation
+          uFFTUV:     { value: 0.5 }   // diagonal FFT spread across both axes
         });
         var planeMat = new THREE.ShaderMaterial({
           uniforms:       planeUniforms,
