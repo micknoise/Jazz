@@ -269,7 +269,7 @@
     // (browser autoplay policy), so no sound is produced until play() is called
     // synchronously inside a user-gesture handler.
     // We explicitly suspend after init as an extra safeguard.
-    var analyser, floatFreqData;
+    var analyser, floatFreqData, linArray, sampleRate;
     var playing = false, engineReady = false;
 
     initAudioEngine('https://louismac.github.io/maximilian-js-local')
@@ -282,9 +282,11 @@
         if (maxi.audioWorkletNode) {
           maxi.audioWorkletNode.context.suspend();
           var ctx = maxi.audioWorkletNode.context;
+          sampleRate = ctx.sampleRate;
           analyser = ctx.createAnalyser();
           analyser.fftSize = FFT_BINS * 2;
           floatFreqData = new Float32Array(analyser.frequencyBinCount);
+          linArray = new Float32Array(FFT_BINS);
           maxi.audioWorkletNode.connect(analyser);
         }
         engineReady = true;
@@ -378,27 +380,23 @@
       updateControls(dt);
 
       if (analyser) {
-        // 1. Convert dB → linear amplitude
+        // 1. dB → linear amplitude into linArray
         analyser.getFloatFrequencyData(floatFreqData);
         var peak = 0;
         for (var i = 0; i < FFT_BINS; i++) {
           var db = floatFreqData[i];
-          fftArray[i] = (isFinite(db) && db > -200) ? Math.pow(10, db / 20) : 0;
-          if (fftArray[i] > peak) peak = fftArray[i];
+          linArray[i] = (isFinite(db) && db > -200) ? Math.pow(10, db / 20) : 0;
+          if (linArray[i] > peak) peak = linArray[i];
         }
 
-        // 2. RMS for rotation speed (pre-boost values)
+        // 2. RMS from linear amplitude
         var rawRms = 0;
-        for (var j = 0; j < FFT_BINS; j++) rawRms += fftArray[j] * fftArray[j];
+        for (var j = 0; j < FFT_BINS; j++) rawRms += linArray[j] * linArray[j];
         rawRms = Math.sqrt(rawRms / FFT_BINS);
         rmsSmooth = rmsSmooth * 0.88 + rawRms * 0.12;
         window.jazzRMS = rmsSmooth;
 
-        // Event detection — one-shot rising-edge with cooldown.
-        // peakBaseline tracks the long-term average peak bin; when the
-        // current peak is 2.5× that baseline we treat it as a new note event
-        // and flip rotation directions once.  The 250 ms cooldown prevents
-        // re-triggering while the envelope is still sustained.
+        // 3. Event detection
         eventCooldown = Math.max(0, eventCooldown - dt);
         peakBaseline  = peakBaseline * 0.99 + peak * 0.01;
         if (eventCooldown <= 0 && peak > peakBaseline * 1.5 && peak > 0.01) {
@@ -408,14 +406,21 @@
           eventCooldown = 0.4;
         }
 
-        // 3. Peak-normalise so the spectral shape drives the geometry directly.
-        //    Loudest bin → 1.0; quiet bins fall toward 0. This makes frequency
-        //    content visibly move across the mesh as pitch and timbre change.
-        //    Below the noise threshold (peak < 0.002) zero everything out.
+        // 4. Log-frequency remap + peak-normalise into the texture buffer.
+        //    FM content sits in the bottom ~5% of linear FFT bins (e.g. 80–1200 Hz
+        //    occupies bins 1–14 of 256 at 44100 Hz / 512-pt FFT).  Remapping to a
+        //    log scale spreads the musical content across all 256 texture slots so
+        //    every part of every geometry sees FFT variation.
         if (peak > 0.002) {
-          var inv = 1.0 / peak;
+          var nyquist = sampleRate / 2;
+          var logMin  = Math.log2(20);    // 20 Hz
+          var logMax  = Math.log2(8000);  // 8 kHz — covers FM fundamentals + sidebands
+          var inv     = 1.0 / peak;
           for (var k = 0; k < FFT_BINS; k++) {
-            fftArray[k] = fftArray[k] * inv;
+            var t      = k / (FFT_BINS - 1);
+            var freq   = Math.pow(2, logMin + t * (logMax - logMin));
+            var binIdx = Math.min(Math.floor(freq * FFT_BINS * 2 / sampleRate), FFT_BINS - 1);
+            fftArray[k] = linArray[binIdx] * inv;
           }
         } else {
           for (var k = 0; k < FFT_BINS; k++) {
