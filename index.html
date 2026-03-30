@@ -3,10 +3,12 @@
 <head>
   <script src="./maximilian.v.0.1.js"></script>
   <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
   <title>Jazz</title>
   <style>
-    canvas { position: absolute; top: 0; left: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
     #playButton {
       position: absolute;
       top: 16px;
@@ -23,25 +25,99 @@
     #playButton:hover { background: rgba(255,255,255,0.1); }
   </style>
 </head>
-<body style="margin:0;background:#000;">
-
-  <canvas id="myCanvas"></canvas>
+<body>
   <button id="playButton">play</button>
 
   <script type="text/javascript">
 
-    // ---------------------------------------------------------------------------
-    // All event-generator parameters live here on the main thread.
-    //
-    // REAL-TIME params (listed in REALTIME_PARAM_KEYS below) are pushed to the
-    // audio thread via maxi.send() / Input — call updateParams() at any time
-    // without interrupting synthesis.
-    //
-    // INIT-ONLY params (initial envelope state, tempo, clock subdivision) are
-    // baked into the DSP code once at startup via buildDSPCode().
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Three.js scene
+    // -------------------------------------------------------------------------
+    var renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x000000, 1);
+    document.body.appendChild(renderer.domElement);
+
+    var scene  = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.z = 500;
+
+    window.addEventListener('resize', function() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // -------------------------------------------------------------------------
+    // FFT data texture — updated every frame from the AnalyserNode.
+    // 256 bins packed as RGBA Uint8; shader reads the R channel (0–1).
+    // -------------------------------------------------------------------------
+    var FFT_BINS    = 256;
+    var fftArray    = new Uint8Array(FFT_BINS * 4);
+    var fftTexture  = new THREE.DataTexture(fftArray, FFT_BINS, 1, THREE.RGBAFormat);
+    fftTexture.magFilter = THREE.LinearFilter;
+    fftTexture.needsUpdate = true;
+
+    // -------------------------------------------------------------------------
+    // Shaders
+    // -------------------------------------------------------------------------
+    var vertexShader = /* glsl */`
+      uniform sampler2D uFFT;     // frequency-magnitude texture (0–1 per bin)
+      uniform float     uDeform;  // maximum radial displacement in world units
+      uniform float     uTime;    // elapsed seconds (available for future use)
+
+      void main() {
+        // Map the sphere's U coordinate to a frequency bin.
+        // uv.x wraps 0→1 around longitude, giving each ring of vertices its
+        // own frequency band. The deformation is purely radial (along normal).
+        float mag      = texture2D(uFFT, vec2(uv.x, 0.5)).r;
+        vec3  displaced = position + normal * mag * uDeform;
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+      }
+    `;
+
+    var fragmentShader = /* glsl */`
+      void main() {
+        gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+      }
+    `;
+
+    // -------------------------------------------------------------------------
+    // Sphere mesh — geometry matches original dim=22 segment count
+    // -------------------------------------------------------------------------
+    var geometry = new THREE.SphereGeometry(200, 22, 22);
+    var material = new THREE.ShaderMaterial({
+      uniforms: {
+        uFFT:    { value: fftTexture },
+        uDeform: { value: 200.0 },   // deform by up to 1× sphere radius
+        uTime:   { value: 0.0 }
+      },
+      vertexShader:   vertexShader,
+      fragmentShader: fragmentShader,
+      wireframe:      true
+    });
+
+    var sphere = new THREE.Mesh(geometry, material);
+    scene.add(sphere);
+
+    // -------------------------------------------------------------------------
+    // Audio analysis state
+    // -------------------------------------------------------------------------
+    var analyser     = null;
+    var byteFreqData = null;
+    var timeData     = null;
+    var smoothedA    = 0;   // proxy for _a envelope — drives X rotation rate
+    var smoothedB    = 0;   // proxy for _b envelope — drives Y rotation rate
+
+    // -------------------------------------------------------------------------
+    // Event generator parameters
+    // Real-time params are pushed to the audio thread via maxi.send/Input.
+    // Init-only params are baked into the DSP code once at startup.
+    // -------------------------------------------------------------------------
     var audioParams = {
-      // -- init-only: synthesis envelope starting state --
+      // init-only: synthesis envelope starting state
       initialA:                  0.5,
       initialB:                  0.5,
       initialFeedback:           0.9999,
@@ -49,10 +125,10 @@
       initialFreq:               350,
       initialFreq2:              50,
       initialModI:               650,
-      // -- init-only: clock --
+      // init-only: clock
       tempo:                     90,
       ticksPerBeat:              4,
-      // -- real-time: event generator control --
+      // real-time: event generator control
       sparsity_1:                0.4,
       sparsity_2:                0.5,
       maxTicksPerBeat:           8,
@@ -69,7 +145,7 @@
       fastModIRange:             10000
     };
 
-    // Ordered list of real-time params — index here MUST match index in play()
+    // Index order must exactly match the reads inside play() in buildDSPCode
     var REALTIME_PARAM_KEYS = [
       'sparsity_1',                 // p[0]
       'sparsity_2',                 // p[1]
@@ -87,34 +163,27 @@
       'fastModIRange'               // p[13]
     ];
 
-    // Push all real-time params to the audio thread ring buffer.
-    // Safe to call at any time — synthesis state is never interrupted.
     function sendRealtimeParams() {
       if (!maxi) return;
       maxi.send('params', REALTIME_PARAM_KEYS.map(function(k) { return audioParams[k]; }));
     }
 
-    // Update any subset of audioParams and send the change to the audio thread.
-    // For real-time params this takes effect within the next audio block (~3ms).
-    // For init-only params the new value is stored but won't affect the running
-    // synthesis (those require a page reload to take effect).
+    // Update any subset of audioParams without restarting synthesis.
+    // Real-time params take effect within the next audio block (~3 ms).
     function updateParams(changes) {
       Object.assign(audioParams, changes);
       sendRealtimeParams();
     }
 
-    // ---------------------------------------------------------------------------
-    // DSP code generator — called ONCE on startup.
-    // Only init-only params are baked in here. Real-time params are received
-    // each audio block via new Input("params") / paramsIn.getValue().
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // DSP code — built once at startup; real-time params arrive via Input
+    // -------------------------------------------------------------------------
     function buildDSPCode(p) {
       return [
         'var myOsc  = new Maximilian.maxiOsc();',
         'var myOsc2 = new Maximilian.maxiOsc();',
         'var myOsc3 = new Maximilian.maxiOsc();',
         '',
-        '// Ring-buffer input for real-time param updates from the main thread',
         'var paramsIn = new Input("params");',
         '',
         'var c = new Maximilian.maxiClock();',
@@ -123,7 +192,6 @@
         'c.setTicksPerBeat(' + p.ticksPerBeat + ');',
         'd.setTempo('        + p.tempo        + ');',
         '',
-        '// Synthesis state — initial values baked in, evolved by the play loop',
         'var _a        = ' + p.initialA        + ';',
         'var _b        = ' + p.initialB        + ';',
         'var _feedback  = ' + p.initialFeedback  + ';',
@@ -132,7 +200,6 @@
         'var _freq2     = ' + p.initialFreq2     + ';',
         'var _modI      = ' + p.initialModI      + ';',
         '',
-        '// Real-time control params — defaults below are overridden by paramsIn each block',
         'var sparsity_1                = ' + p.sparsity_1                + ';',
         'var sparsity_2                = ' + p.sparsity_2                + ';',
         'var maxTicksPerBeat           = ' + p.maxTicksPerBeat           + ';',
@@ -149,7 +216,6 @@
         'var fastModIRange             = ' + p.fastModIRange             + ';',
         '',
         'function play() {',
-        '  // Pull latest params from main thread (returns null when no new message)',
         '  var p = paramsIn.getValue();',
         '  if (p) {',
         '    sparsity_1                = p[0];',
@@ -199,52 +265,14 @@
       ].join('\n');
     }
 
-    // ---------------------------------------------------------------------------
-    // Canvas / visualisation
-    // ---------------------------------------------------------------------------
-    var fov    = 500;
-    var canvas = document.querySelector('canvas');
-    var width  = window.innerWidth;
-    var height = window.innerHeight;
-    var ctx    = canvas.getContext('2d');
-    canvas.setAttribute('width',  width);
-    canvas.setAttribute('height', height);
-
-    var HALF_WIDTH = width / 2;
-    var x3d = 0, y3d = 0, z3d = 0;
-    var lastX = 0, lastY = 0;
-
-    // Sphere points initialised once; rotateX/Y mutate them in place each frame
-    var dim       = 22;
-    var spacing   = (Math.PI * 2) / dim;
-    var numPoints = dim * dim;
-    var size      = 200;
-
-    var points = [];
-    for (var i = 0; i < dim; i++) {
-      var pz = size * Math.cos(spacing / 2 * i);
-      var ps = size * Math.sin(spacing / 2 * i);
-      for (var j = 0; j < dim; j++) {
-        points.push([Math.cos(spacing * j) * ps, Math.sin(spacing * j) * ps, pz]);
-      }
-    }
-
-    var analyser  = null;
-    var freqData  = null;
-    var timeData  = null;
-    var smoothedA = 0;
-    var smoothedB = 0;
-
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Audio engine
-    // ---------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     var maxi;
     initAudioEngine('https://louismac.github.io/maximilian-js-local').then(function(dspEngine) {
       maxi = dspEngine;
-      // Seed the ring buffer BEFORE setAudioCode so new Input("params") in the
-      // DSP code finds the buffer already live when the worklet initialises it.
-      sendRealtimeParams();
-      maxi.setAudioCode(buildDSPCode(audioParams));
+      sendRealtimeParams();                         // seed buffer before DSP init
+      maxi.setAudioCode(buildDSPCode(audioParams)); // called once — never again
     });
 
     var playing    = false;
@@ -256,11 +284,11 @@
         playing = true;
         playButton.textContent = 'stop';
         if (!analyser && maxi.audioWorkletNode) {
-          var audioCtx = maxi.audioWorkletNode.context;
-          analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 2048;
-          freqData = new Float32Array(analyser.frequencyBinCount);
-          timeData = new Float32Array(analyser.fftSize);
+          var audioCtx  = maxi.audioWorkletNode.context;
+          analyser      = audioCtx.createAnalyser();
+          analyser.fftSize = FFT_BINS * 2; // frequencyBinCount = FFT_BINS
+          byteFreqData  = new Uint8Array(analyser.frequencyBinCount);
+          timeData      = new Float32Array(analyser.fftSize);
           maxi.audioWorkletNode.connect(analyser);
         }
       } else {
@@ -270,14 +298,29 @@
       }
     });
 
-    // ---------------------------------------------------------------------------
-    // Draw loop
-    // ---------------------------------------------------------------------------
-    function draw() {
-      if (analyser) {
-        analyser.getFloatFrequencyData(freqData);
-        analyser.getFloatTimeDomainData(timeData);
+    // -------------------------------------------------------------------------
+    // Render loop
+    // -------------------------------------------------------------------------
+    var clock = new THREE.Clock();
 
+    function draw() {
+      var elapsed = clock.getElapsedTime();
+      material.uniforms.uTime.value = elapsed;
+
+      if (analyser) {
+        // Update FFT texture
+        analyser.getByteFrequencyData(byteFreqData);
+        for (var i = 0; i < FFT_BINS; i++) {
+          var v = byteFreqData[i];
+          fftArray[i * 4]     = v;
+          fftArray[i * 4 + 1] = v;
+          fftArray[i * 4 + 2] = v;
+          fftArray[i * 4 + 3] = 255;
+        }
+        fftTexture.needsUpdate = true;
+
+        // RMS amplitude for rotation proxy
+        analyser.getFloatTimeDomainData(timeData);
         var rms = 0;
         for (var k = 0; k < timeData.length; k++) rms += timeData[k] * timeData[k];
         rms = Math.sqrt(rms / timeData.length);
@@ -286,62 +329,15 @@
         smoothedB = smoothedB * 0.95 + rms * 0.05;
       }
 
-      ctx.fillStyle = 'rgb(0,0,0)';
-      ctx.fillRect(0, 0, width, height);
+      // Accumulate rotation — same a/10, b/15 scaling as the original
+      sphere.rotation.x += smoothedA / 10;
+      sphere.rotation.y += smoothedB / 15;
 
-      var angleX = smoothedA / 10;
-      var angleY = smoothedB / 15;
-
-      ctx.beginPath();
-      for (var i = 0; i < numPoints; i++) {
-        var point3d = points[i];
-
-        rotateX(point3d, angleX);
-        rotateY(point3d, angleY);
-
-        // Normalise AnalyserNode dB value → [0, 1]; use as radial distortion.
-        // radialScale=1 renders the sphere at full size even with no audio.
-        var mag = 0;
-        if (freqData) {
-          var dBVal = freqData[i % 20];
-          mag = Math.max(0, (dBVal - analyser.minDecibels) / (analyser.maxDecibels - analyser.minDecibels));
-        }
-
-        var radialScale = 1 + mag * 2;
-        x3d = point3d[0] * radialScale;
-        y3d = point3d[1] * radialScale;
-        z3d = point3d[2] * radialScale;
-
-        var scale = fov / (fov + z3d);
-        var x2d = (x3d * scale) + HALF_WIDTH / 2;
-        var y2d = (y3d * scale) + height / 2;
-
-        ctx.strokeStyle = 'rgb(255,255,255)';
-        ctx.moveTo(x2d, y2d);
-        ctx.lineTo(lastX + scale, lastY);
-        ctx.stroke();
-        lastX = x2d;
-        lastY = y2d;
-      }
-
+      renderer.render(scene, camera);
       requestAnimationFrame(draw);
     }
 
     requestAnimationFrame(draw);
-
-    function rotateX(point3d, angle) {
-      var x = point3d[0], z = point3d[2];
-      var c = Math.cos(angle), s = Math.sin(angle);
-      point3d[0] = x * c + z * s;
-      point3d[2] = x * -s + z * c;
-    }
-
-    function rotateY(point3d, angle) {
-      var y = point3d[1], z = point3d[2];
-      var c = Math.cos(angle), s = Math.sin(angle);
-      point3d[1] = y * c + z * s;
-      point3d[2] = y * -s + z * c;
-    }
 
   </script>
 </body>
