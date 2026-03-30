@@ -31,74 +31,143 @@
   <script type="text/javascript">
 
     // ---------------------------------------------------------------------------
-    // Event generator control parameters — all exposed on the main thread.
-    // Call updateParams({ key: value, ... }) to change any of these at runtime;
-    // the worklet DSP code will be rebuilt and reloaded automatically.
+    // All event-generator parameters live here on the main thread.
+    //
+    // REAL-TIME params (listed in REALTIME_PARAM_KEYS below) are pushed to the
+    // audio thread via maxi.send() / Input — call updateParams() at any time
+    // without interrupting synthesis.
+    //
+    // INIT-ONLY params (initial envelope state, tempo, clock subdivision) are
+    // baked into the DSP code once at startup via buildDSPCode().
     // ---------------------------------------------------------------------------
     var audioParams = {
-      initialA:                 0.5,       // starting amplitude envelope
-      initialB:                 0.5,       // starting modulation envelope
-      initialFeedback:          0.9999,    // primary amplitude decay per sample
-      initialBFeedback:         0.9999,    // modulation amplitude decay per sample
-      initialFreq:              350,       // carrier oscillator frequency (Hz)
-      initialFreq2:             50,        // modulation oscillator frequency (Hz)
-      initialModI:              650,       // FM modulation index
-      sparsity_1:               0.4,       // probability threshold for slow events
-      sparsity_2:               0.5,       // probability threshold for fast events
-      tempo:                    90,        // BPM for both clocks
-      ticksPerBeat:             4,         // initial ticks-per-beat for fast clock
-      maxTicksPerBeat:          8,         // max subdivision randomised on slow events
-      slowFreq2:                100,       // modulator freq set on slow events (Hz)
-      slowModI:                 1,         // modulation index set on slow events
-      positiveFeedbackThreshold: 0.75,     // P(growth) vs P(decay) on slow events
-      positiveFeedbackValue:    1.00001,   // bFeedback when growing
-      decayFeedbackValue:       0.999,     // bFeedback when decaying
-      fastFreqBase:             250,       // fast event: minimum carrier freq (Hz)
-      fastFreqRange:            350,       // fast event: carrier freq random range (Hz)
-      fastFeedbackBase:         0.999,     // fast event: feedback base value
-      fastFeedbackRange:        0.001,     // fast event: feedback random range
-      fastFreq2Range:           300,       // fast event: modulator freq range (Hz)
-      fastModIRange:            10000      // fast event: modulation index range
+      // -- init-only: synthesis envelope starting state --
+      initialA:                  0.5,
+      initialB:                  0.5,
+      initialFeedback:           0.9999,
+      initialBFeedback:          0.9999,
+      initialFreq:               350,
+      initialFreq2:              50,
+      initialModI:               650,
+      // -- init-only: clock --
+      tempo:                     90,
+      ticksPerBeat:              4,
+      // -- real-time: event generator control --
+      sparsity_1:                0.4,
+      sparsity_2:                0.5,
+      maxTicksPerBeat:           8,
+      slowFreq2:                 100,
+      slowModI:                  1,
+      positiveFeedbackThreshold: 0.75,
+      positiveFeedbackValue:     1.00001,
+      decayFeedbackValue:        0.999,
+      fastFreqBase:              250,
+      fastFreqRange:             350,
+      fastFeedbackBase:          0.999,
+      fastFeedbackRange:         0.001,
+      fastFreq2Range:            300,
+      fastModIRange:             10000
     };
 
-    // Builds the DSP code string sent to the AudioWorklet from the current params.
-    // "Maximilian.xxx" is replaced with "Module.xxx" at runtime by the engine.
+    // Ordered list of real-time params — index here MUST match index in play()
+    var REALTIME_PARAM_KEYS = [
+      'sparsity_1',                 // p[0]
+      'sparsity_2',                 // p[1]
+      'maxTicksPerBeat',            // p[2]
+      'slowFreq2',                  // p[3]
+      'slowModI',                   // p[4]
+      'positiveFeedbackThreshold',  // p[5]
+      'positiveFeedbackValue',      // p[6]
+      'decayFeedbackValue',         // p[7]
+      'fastFreqBase',               // p[8]
+      'fastFreqRange',              // p[9]
+      'fastFeedbackBase',           // p[10]
+      'fastFeedbackRange',          // p[11]
+      'fastFreq2Range',             // p[12]
+      'fastModIRange'               // p[13]
+    ];
+
+    // Push all real-time params to the audio thread ring buffer.
+    // Safe to call at any time — synthesis state is never interrupted.
+    function sendRealtimeParams() {
+      if (!maxi) return;
+      maxi.send('params', REALTIME_PARAM_KEYS.map(function(k) { return audioParams[k]; }));
+    }
+
+    // Update any subset of audioParams and send the change to the audio thread.
+    // For real-time params this takes effect within the next audio block (~3ms).
+    // For init-only params the new value is stored but won't affect the running
+    // synthesis (those require a page reload to take effect).
+    function updateParams(changes) {
+      Object.assign(audioParams, changes);
+      sendRealtimeParams();
+    }
+
+    // ---------------------------------------------------------------------------
+    // DSP code generator — called ONCE on startup.
+    // Only init-only params are baked in here. Real-time params are received
+    // each audio block via new Input("params") / paramsIn.getValue().
+    // ---------------------------------------------------------------------------
     function buildDSPCode(p) {
       return [
         'var myOsc  = new Maximilian.maxiOsc();',
         'var myOsc2 = new Maximilian.maxiOsc();',
         'var myOsc3 = new Maximilian.maxiOsc();',
         '',
+        '// Ring-buffer input for real-time param updates from the main thread',
+        'var paramsIn = new Input("params");',
+        '',
         'var c = new Maximilian.maxiClock();',
         'var d = new Maximilian.maxiClock();',
-        'c.setTempo('          + p.tempo + ');',
-        'c.setTicksPerBeat('   + p.ticksPerBeat + ');',
-        'd.setTempo('          + p.tempo + ');',
+        'c.setTempo('        + p.tempo        + ');',
+        'c.setTicksPerBeat(' + p.ticksPerBeat + ');',
+        'd.setTempo('        + p.tempo        + ');',
         '',
-        'var _a        = ' + p.initialA + ';',
-        'var _b        = ' + p.initialB + ';',
-        'var _feedback  = ' + p.initialFeedback + ';',
+        '// Synthesis state — initial values baked in, evolved by the play loop',
+        'var _a        = ' + p.initialA        + ';',
+        'var _b        = ' + p.initialB        + ';',
+        'var _feedback  = ' + p.initialFeedback  + ';',
         'var _bFeedback = ' + p.initialBFeedback + ';',
-        'var _freq      = ' + p.initialFreq + ';',
-        'var _freq2     = ' + p.initialFreq2 + ';',
-        'var _modI      = ' + p.initialModI + ';',
+        'var _freq      = ' + p.initialFreq      + ';',
+        'var _freq2     = ' + p.initialFreq2     + ';',
+        'var _modI      = ' + p.initialModI      + ';',
         '',
-        'var sparsity_1                = ' + p.sparsity_1 + ';',
-        'var sparsity_2                = ' + p.sparsity_2 + ';',
-        'var maxTicksPerBeat           = ' + p.maxTicksPerBeat + ';',
-        'var slowFreq2                 = ' + p.slowFreq2 + ';',
-        'var slowModI                  = ' + p.slowModI + ';',
+        '// Real-time control params — defaults below are overridden by paramsIn each block',
+        'var sparsity_1                = ' + p.sparsity_1                + ';',
+        'var sparsity_2                = ' + p.sparsity_2                + ';',
+        'var maxTicksPerBeat           = ' + p.maxTicksPerBeat           + ';',
+        'var slowFreq2                 = ' + p.slowFreq2                 + ';',
+        'var slowModI                  = ' + p.slowModI                  + ';',
         'var positiveFeedbackThreshold = ' + p.positiveFeedbackThreshold + ';',
-        'var positiveFeedbackValue     = ' + p.positiveFeedbackValue + ';',
-        'var decayFeedbackValue        = ' + p.decayFeedbackValue + ';',
-        'var fastFreqBase              = ' + p.fastFreqBase + ';',
-        'var fastFreqRange             = ' + p.fastFreqRange + ';',
-        'var fastFeedbackBase          = ' + p.fastFeedbackBase + ';',
-        'var fastFeedbackRange         = ' + p.fastFeedbackRange + ';',
-        'var fastFreq2Range            = ' + p.fastFreq2Range + ';',
-        'var fastModIRange             = ' + p.fastModIRange + ';',
+        'var positiveFeedbackValue     = ' + p.positiveFeedbackValue     + ';',
+        'var decayFeedbackValue        = ' + p.decayFeedbackValue        + ';',
+        'var fastFreqBase              = ' + p.fastFreqBase              + ';',
+        'var fastFreqRange             = ' + p.fastFreqRange             + ';',
+        'var fastFeedbackBase          = ' + p.fastFeedbackBase          + ';',
+        'var fastFeedbackRange         = ' + p.fastFeedbackRange         + ';',
+        'var fastFreq2Range            = ' + p.fastFreq2Range            + ';',
+        'var fastModIRange             = ' + p.fastModIRange             + ';',
         '',
         'function play() {',
+        '  // Pull latest params from main thread (returns null when no new message)',
+        '  var p = paramsIn.getValue();',
+        '  if (p) {',
+        '    sparsity_1                = p[0];',
+        '    sparsity_2                = p[1];',
+        '    maxTicksPerBeat           = p[2];',
+        '    slowFreq2                 = p[3];',
+        '    slowModI                  = p[4];',
+        '    positiveFeedbackThreshold = p[5];',
+        '    positiveFeedbackValue     = p[6];',
+        '    decayFeedbackValue        = p[7];',
+        '    fastFreqBase              = p[8];',
+        '    fastFreqRange             = p[9];',
+        '    fastFeedbackBase          = p[10];',
+        '    fastFeedbackRange         = p[11];',
+        '    fastFreq2Range            = p[12];',
+        '    fastModIRange             = p[13];',
+        '  }',
+        '',
         '  c.ticker();',
         '  d.ticker();',
         '',
@@ -130,16 +199,8 @@
       ].join('\n');
     }
 
-    // Update any subset of audioParams and reload the DSP code in the worklet.
-    // Note: reloading resets the internal envelope state (_a, _b, etc.) to their
-    // initial values, so avoid calling this continuously at audio rate.
-    function updateParams(changes) {
-      Object.assign(audioParams, changes);
-      if (maxi) maxi.setAudioCode(buildDSPCode(audioParams));
-    }
-
     // ---------------------------------------------------------------------------
-    // Canvas / visualisation setup
+    // Canvas / visualisation
     // ---------------------------------------------------------------------------
     var fov    = 500;
     var canvas = document.querySelector('canvas');
@@ -153,8 +214,7 @@
     var x3d = 0, y3d = 0, z3d = 0;
     var lastX = 0, lastY = 0;
 
-    // Sphere geometry — points are initialised once and mutated in-place by
-    // rotateX / rotateY each frame so rotation accumulates over time.
+    // Sphere points initialised once; rotateX/Y mutate them in place each frame
     var dim       = 22;
     var spacing   = (Math.PI * 2) / dim;
     var numPoints = dim * dim;
@@ -169,28 +229,24 @@
       }
     }
 
-    // ---------------------------------------------------------------------------
-    // Audio analysis — AnalyserNode taps the worklet output on the main thread
-    // ---------------------------------------------------------------------------
     var analyser  = null;
     var freqData  = null;
     var timeData  = null;
-    // Smoothed amplitude proxies for the two envelope axes of sphere rotation.
-    // Using different time constants preserves the two-axis visual character of
-    // the original _a / _b envelopes.
     var smoothedA = 0;
     var smoothedB = 0;
 
     // ---------------------------------------------------------------------------
-    // Audio engine init
+    // Audio engine
     // ---------------------------------------------------------------------------
     var maxi;
     initAudioEngine('https://louismac.github.io/maximilian-js-local').then(function(dspEngine) {
       maxi = dspEngine;
+      // Seed the ring buffer BEFORE setAudioCode so new Input("params") in the
+      // DSP code finds the buffer already live when the worklet initialises it.
+      sendRealtimeParams();
       maxi.setAudioCode(buildDSPCode(audioParams));
     });
 
-    // Play/stop — Web Audio requires a user gesture before the context can start
     var playing    = false;
     var playButton = document.getElementById('playButton');
     playButton.addEventListener('click', function() {
@@ -199,7 +255,6 @@
         maxi.play();
         playing = true;
         playButton.textContent = 'stop';
-
         if (!analyser && maxi.audioWorkletNode) {
           var audioCtx = maxi.audioWorkletNode.context;
           analyser = audioCtx.createAnalyser();
@@ -227,7 +282,6 @@
         for (var k = 0; k < timeData.length; k++) rms += timeData[k] * timeData[k];
         rms = Math.sqrt(rms / timeData.length);
 
-        // Two smoothed envelopes with different time constants (proxy for _a / _b)
         smoothedA = smoothedA * 0.90 + rms * 0.10;
         smoothedB = smoothedB * 0.95 + rms * 0.05;
       }
@@ -235,8 +289,6 @@
       ctx.fillStyle = 'rgb(0,0,0)';
       ctx.fillRect(0, 0, width, height);
 
-      // Rotation angles driven by amplitude envelopes, matching the original
-      // angleX = a/10, angleY = b/15 scaling at typical RMS values
       var angleX = smoothedA / 10;
       var angleY = smoothedB / 15;
 
@@ -247,18 +299,14 @@
         rotateX(point3d, angleX);
         rotateY(point3d, angleY);
 
-        // Spectral distortion: normalise AnalyserNode dB value to [0, 1] and use
-        // it as a radial scale factor so the sphere is always visible and inflates
-        // outward with spectral energy. Without audio mag stays at 0 so the sphere
-        // rests at its base unit size (1.0 * point3d coordinates).
+        // Normalise AnalyserNode dB value → [0, 1]; use as radial distortion.
+        // radialScale=1 renders the sphere at full size even with no audio.
         var mag = 0;
         if (freqData) {
           var dBVal = freqData[i % 20];
           mag = Math.max(0, (dBVal - analyser.minDecibels) / (analyser.maxDecibels - analyser.minDecibels));
         }
 
-        // Base sphere (radialScale=1) is always the full size=200 unit sphere.
-        // FFT energy inflates it outward by up to 2× at full signal.
         var radialScale = 1 + mag * 2;
         x3d = point3d[0] * radialScale;
         y3d = point3d[1] * radialScale;
