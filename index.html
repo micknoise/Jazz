@@ -4,6 +4,7 @@
   <script src="./maximilian.v.0.1.js"></script>
   <script src="./enable-threads.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
   <title>Jazz</title>
   <style>
@@ -339,6 +340,41 @@
     }
 
     requestAnimationFrame(draw);
+
+    // -------------------------------------------------------------------------
+    // GUI — lil-gui (Three.js's built-in parameter controls)
+    // Each audio control mutates audioParams directly; onChange fires
+    // sendRealtimeParams() to push all current values to the ring buffer.
+    // Visual controls update Three.js uniforms directly.
+    // -------------------------------------------------------------------------
+    var visualParams = { uDeform: material.uniforms.uDeform.value };
+
+    var gui = new lil.GUI();
+
+    var timingFolder = gui.addFolder('Timing');
+    timingFolder.add(audioParams, 'sparsity_1',       0,   1,   0.01).name('Slow event threshold').onChange(sendRealtimeParams);
+    timingFolder.add(audioParams, 'sparsity_2',       0,   1,   0.01).name('Fast event threshold').onChange(sendRealtimeParams);
+    timingFolder.add(audioParams, 'maxTicksPerBeat',  1,  16,   1   ).name('Max subdivisions')    .onChange(sendRealtimeParams);
+
+    var slowFolder = gui.addFolder('Slow Events');
+    slowFolder.add(audioParams, 'slowFreq2',                 1, 2000, 1      ).name('Modulator freq (Hz)')  .onChange(sendRealtimeParams);
+    slowFolder.add(audioParams, 'slowModI',                  0,  100, 0.1    ).name('Mod index')             .onChange(sendRealtimeParams);
+    slowFolder.add(audioParams, 'positiveFeedbackThreshold', 0,    1, 0.01   ).name('Growth probability')   .onChange(sendRealtimeParams);
+    slowFolder.add(audioParams, 'positiveFeedbackValue',     1, 1.001, 0.00001).name('Growth rate')          .onChange(sendRealtimeParams);
+    slowFolder.add(audioParams, 'decayFeedbackValue',      0.9,    1, 0.0001 ).name('Decay rate')            .onChange(sendRealtimeParams);
+
+    var fastFolder = gui.addFolder('Fast Events');
+    fastFolder.add(audioParams, 'fastFreqBase',     0, 2000,    1).name('Carrier freq base (Hz)') .onChange(sendRealtimeParams);
+    fastFolder.add(audioParams, 'fastFreqRange',    0, 2000,    1).name('Carrier freq range (Hz)').onChange(sendRealtimeParams);
+    fastFolder.add(audioParams, 'fastFeedbackBase', 0.99, 1, 0.0001).name('Feedback base')        .onChange(sendRealtimeParams);
+    fastFolder.add(audioParams, 'fastFeedbackRange', 0, 0.01, 0.00001).name('Feedback range')     .onChange(sendRealtimeParams);
+    fastFolder.add(audioParams, 'fastFreq2Range',   0, 1000,    1).name('Modulator freq range (Hz)').onChange(sendRealtimeParams);
+    fastFolder.add(audioParams, 'fastModIRange',    0, 20000,   1).name('Mod index range')         .onChange(sendRealtimeParams);
+
+    var visualFolder = gui.addFolder('Visuals');
+    visualFolder.add(visualParams, 'uDeform', 0, 500, 1).name('Deform depth').onChange(function() {
+      material.uniforms.uDeform.value = visualParams.uDeform;
+    });
 
   </script>
 </body>
