@@ -31,8 +31,8 @@
       title: 'Landscape',
       trailOpacity: 0.06,
       camera: {
-        position: new THREE.Vector3(0, 100, 600),
-        lookAt: new THREE.Vector3(0, 0, 0)
+        position: new THREE.Vector3(0, -100, 700),
+        lookAt: new THREE.Vector3(0, -200, 0)
       },
       bounds: 1200,
       speed: 120,
@@ -57,7 +57,7 @@
           uniforms: ss.makeUniforms({
             uDeform:    { value: 900.0 },
             uLineWidth: { value: 1.8 },
-            uFFTUV:     { value: 0.5 }
+            uFFTUV:     { value: 0.0 }
           }),
           transparent: true,
           depthWrite: false

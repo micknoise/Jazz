@@ -31,7 +31,7 @@
       title: 'Ocean',
       trailOpacity: 0.04,
       camera: {
-        position: new THREE.Vector3(0, 300, 600),
+        position: new THREE.Vector3(0, 30, 800),
         lookAt: new THREE.Vector3(0, 0, 0)
       },
       bounds: 1200,
@@ -56,7 +56,7 @@
           fragmentShader: ss.fragmentShader,
           uniforms: ss.makeUniforms({
             uDeform: { value: 1200.0 },
-            uFFTUV: { value: 0.5 }  // diagonal FFT spread across width and depth
+            uFFTUV: { value: 0.0 }  // frequency left→right across the surface
           }),
           transparent: true,
           depthWrite: false
