@@ -408,12 +408,18 @@
           eventCooldown = 0.4;
         }
 
-        // 3. Boost: normalise to peak, add 30% floor so ALL vertices deform,
-        //    then amplify 4× for dramatic effect.
-        if (peak > 0.0001) {
-          var floor4 = peak * 0.30;
+        // 3. Peak-normalise so the spectral shape drives the geometry directly.
+        //    Loudest bin → 1.0; quiet bins fall toward 0. This makes frequency
+        //    content visibly move across the mesh as pitch and timbre change.
+        //    Below the noise threshold (peak < 0.002) zero everything out.
+        if (peak > 0.002) {
+          var inv = 1.0 / peak;
           for (var k = 0; k < FFT_BINS; k++) {
-            fftArray[k] = Math.max(fftArray[k], floor4) * 4.0;
+            fftArray[k] = fftArray[k] * inv;
+          }
+        } else {
+          for (var k = 0; k < FFT_BINS; k++) {
+            fftArray[k] = 0;
           }
         }
 
