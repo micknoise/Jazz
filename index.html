@@ -28,94 +28,133 @@
   <canvas id="myCanvas"></canvas>
   <button id="playButton">play</button>
 
-  <!--
-    DSP code — runs inside an AudioWorklet on the audio thread.
-    "Maximilian.xxx" is replaced with "Module.xxx" at runtime by the engine.
-    All event-generator control parameters are exposed as variables
-    at the top of this block with their original default values.
-  -->
-  <script id="myAudioScript">
-    var myOsc  = new Maximilian.maxiOsc();
-    var myOsc2 = new Maximilian.maxiOsc();
-    var myOsc3 = new Maximilian.maxiOsc();
-
-    var c = new Maximilian.maxiClock();
-    var d = new Maximilian.maxiClock();
-    c.setTempo(90);
-    c.setTicksPerBeat(4);
-    d.setTempo(90);
-
-    // --- event generator control parameters (edit these to change behaviour) ---
-    var _a                        = 0.5;      // initial amplitude envelope
-    var _b                        = 0.5;      // initial modulation envelope
-    var _feedback                 = 0.9999;   // primary amplitude decay per sample
-    var _bFeedback                = 0.9999;   // modulation amplitude decay per sample
-    var _freq                     = 350;      // primary oscillator frequency (Hz)
-    var _freq2                    = 50;       // modulation oscillator frequency (Hz)
-    var _modI                     = 650;      // FM modulation index
-    var sparsity_1                = 0.4;      // probability threshold for slow events
-    var sparsity_2                = 0.5;      // probability threshold for fast events
-    var maxTicksPerBeat           = 8;        // max subdivision randomised on slow events
-    var slowFreq2                 = 100;      // modulator freq set on slow events (Hz)
-    var slowModI                  = 1;        // modulation index set on slow events
-    var positiveFeedbackThreshold = 0.75;     // P(growth) vs P(decay) on slow events
-    var positiveFeedbackValue     = 1.00001;  // bFeedback when growing
-    var decayFeedbackValue        = 0.999;    // bFeedback when decaying
-    var fastFreqBase              = 250;      // fast event: minimum carrier freq (Hz)
-    var fastFreqRange             = 350;      // fast event: carrier freq random range (Hz)
-    var fastFeedbackBase          = 0.999;    // fast event: feedback base value
-    var fastFeedbackRange         = 0.001;    // fast event: feedback random range
-    var fastFreq2Range            = 300;      // fast event: modulator freq range (Hz)
-    var fastModIRange             = 10000;    // fast event: modulation index range
-    // -------------------------------------------------------------------------
-
-    function play() {
-      c.ticker();
-      d.ticker();
-
-      if (d.tick && Math.random() > sparsity_1) {
-        c.setTicksPerBeat(Math.floor(1 + Math.random() * maxTicksPerBeat));
-        _a = 1.0;
-        _b = 1.0;
-        _bFeedback = Math.random() > positiveFeedbackThreshold
-          ? positiveFeedbackValue
-          : decayFeedbackValue;
-        _freq2 = slowFreq2;
-        _modI  = slowModI;
-      }
-      if (c.tick && Math.random() > sparsity_2 && !d.tick) {
-        _freq      = fastFreqBase + (Math.random() * fastFreqRange);
-        _a         = 1.0;
-        _b         = 1.0;
-        _feedback  = fastFeedbackBase + (Math.random() * fastFeedbackRange);
-        _bFeedback = fastFeedbackBase + (Math.random() * fastFeedbackRange);
-        _freq2     = Math.random() * fastFreq2Range;
-        _modI      = Math.random() * fastModIRange;
-      }
-
-      _a *= _feedback;
-      _b *= _bFeedback;
-
-      return myOsc.sinewave((_freq * _b) + (myOsc2.sinewave(_freq2) * _modI)) * _a;
-    }
-  </script>
-
   <script type="text/javascript">
-    // --- canvas setup ---
-    var fov     = 500;
-    var canvas  = document.querySelector("canvas");
-    var width   = window.innerWidth;
-    var height  = window.innerHeight;
-    var ctx     = canvas.getContext("2d");
-    canvas.setAttribute("width",  width);
-    canvas.setAttribute("height", height);
 
-    var HALF_WIDTH  = width  / 2;
-    var HALF_HEIGHT = height / 2;
+    // ---------------------------------------------------------------------------
+    // Event generator control parameters — all exposed on the main thread.
+    // Call updateParams({ key: value, ... }) to change any of these at runtime;
+    // the worklet DSP code will be rebuilt and reloaded automatically.
+    // ---------------------------------------------------------------------------
+    var audioParams = {
+      initialA:                 0.5,       // starting amplitude envelope
+      initialB:                 0.5,       // starting modulation envelope
+      initialFeedback:          0.9999,    // primary amplitude decay per sample
+      initialBFeedback:         0.9999,    // modulation amplitude decay per sample
+      initialFreq:              350,       // carrier oscillator frequency (Hz)
+      initialFreq2:             50,        // modulation oscillator frequency (Hz)
+      initialModI:              650,       // FM modulation index
+      sparsity_1:               0.4,       // probability threshold for slow events
+      sparsity_2:               0.5,       // probability threshold for fast events
+      tempo:                    90,        // BPM for both clocks
+      ticksPerBeat:             4,         // initial ticks-per-beat for fast clock
+      maxTicksPerBeat:          8,         // max subdivision randomised on slow events
+      slowFreq2:                100,       // modulator freq set on slow events (Hz)
+      slowModI:                 1,         // modulation index set on slow events
+      positiveFeedbackThreshold: 0.75,     // P(growth) vs P(decay) on slow events
+      positiveFeedbackValue:    1.00001,   // bFeedback when growing
+      decayFeedbackValue:       0.999,     // bFeedback when decaying
+      fastFreqBase:             250,       // fast event: minimum carrier freq (Hz)
+      fastFreqRange:            350,       // fast event: carrier freq random range (Hz)
+      fastFeedbackBase:         0.999,     // fast event: feedback base value
+      fastFeedbackRange:        0.001,     // fast event: feedback random range
+      fastFreq2Range:           300,       // fast event: modulator freq range (Hz)
+      fastModIRange:            10000      // fast event: modulation index range
+    };
+
+    // Builds the DSP code string sent to the AudioWorklet from the current params.
+    // "Maximilian.xxx" is replaced with "Module.xxx" at runtime by the engine.
+    function buildDSPCode(p) {
+      return [
+        'var myOsc  = new Maximilian.maxiOsc();',
+        'var myOsc2 = new Maximilian.maxiOsc();',
+        'var myOsc3 = new Maximilian.maxiOsc();',
+        '',
+        'var c = new Maximilian.maxiClock();',
+        'var d = new Maximilian.maxiClock();',
+        'c.setTempo('          + p.tempo + ');',
+        'c.setTicksPerBeat('   + p.ticksPerBeat + ');',
+        'd.setTempo('          + p.tempo + ');',
+        '',
+        'var _a        = ' + p.initialA + ';',
+        'var _b        = ' + p.initialB + ';',
+        'var _feedback  = ' + p.initialFeedback + ';',
+        'var _bFeedback = ' + p.initialBFeedback + ';',
+        'var _freq      = ' + p.initialFreq + ';',
+        'var _freq2     = ' + p.initialFreq2 + ';',
+        'var _modI      = ' + p.initialModI + ';',
+        '',
+        'var sparsity_1                = ' + p.sparsity_1 + ';',
+        'var sparsity_2                = ' + p.sparsity_2 + ';',
+        'var maxTicksPerBeat           = ' + p.maxTicksPerBeat + ';',
+        'var slowFreq2                 = ' + p.slowFreq2 + ';',
+        'var slowModI                  = ' + p.slowModI + ';',
+        'var positiveFeedbackThreshold = ' + p.positiveFeedbackThreshold + ';',
+        'var positiveFeedbackValue     = ' + p.positiveFeedbackValue + ';',
+        'var decayFeedbackValue        = ' + p.decayFeedbackValue + ';',
+        'var fastFreqBase              = ' + p.fastFreqBase + ';',
+        'var fastFreqRange             = ' + p.fastFreqRange + ';',
+        'var fastFeedbackBase          = ' + p.fastFeedbackBase + ';',
+        'var fastFeedbackRange         = ' + p.fastFeedbackRange + ';',
+        'var fastFreq2Range            = ' + p.fastFreq2Range + ';',
+        'var fastModIRange             = ' + p.fastModIRange + ';',
+        '',
+        'function play() {',
+        '  c.ticker();',
+        '  d.ticker();',
+        '',
+        '  if (d.tick && Math.random() > sparsity_1) {',
+        '    c.setTicksPerBeat(Math.floor(1 + Math.random() * maxTicksPerBeat));',
+        '    _a = 1.0;',
+        '    _b = 1.0;',
+        '    _bFeedback = Math.random() > positiveFeedbackThreshold',
+        '      ? positiveFeedbackValue',
+        '      : decayFeedbackValue;',
+        '    _freq2 = slowFreq2;',
+        '    _modI  = slowModI;',
+        '  }',
+        '  if (c.tick && Math.random() > sparsity_2 && !d.tick) {',
+        '    _freq      = fastFreqBase + (Math.random() * fastFreqRange);',
+        '    _a         = 1.0;',
+        '    _b         = 1.0;',
+        '    _feedback  = fastFeedbackBase + (Math.random() * fastFeedbackRange);',
+        '    _bFeedback = fastFeedbackBase + (Math.random() * fastFeedbackRange);',
+        '    _freq2     = Math.random() * fastFreq2Range;',
+        '    _modI      = Math.random() * fastModIRange;',
+        '  }',
+        '',
+        '  _a *= _feedback;',
+        '  _b *= _bFeedback;',
+        '',
+        '  return myOsc.sinewave((_freq * _b) + (myOsc2.sinewave(_freq2) * _modI)) * _a;',
+        '}'
+      ].join('\n');
+    }
+
+    // Update any subset of audioParams and reload the DSP code in the worklet.
+    // Note: reloading resets the internal envelope state (_a, _b, etc.) to their
+    // initial values, so avoid calling this continuously at audio rate.
+    function updateParams(changes) {
+      Object.assign(audioParams, changes);
+      if (maxi) maxi.setAudioCode(buildDSPCode(audioParams));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Canvas / visualisation setup
+    // ---------------------------------------------------------------------------
+    var fov    = 500;
+    var canvas = document.querySelector('canvas');
+    var width  = window.innerWidth;
+    var height = window.innerHeight;
+    var ctx    = canvas.getContext('2d');
+    canvas.setAttribute('width',  width);
+    canvas.setAttribute('height', height);
+
+    var HALF_WIDTH = width / 2;
     var x3d = 0, y3d = 0, z3d = 0;
     var lastX = 0, lastY = 0;
 
-    // --- sphere geometry — initialised once, mutated in place by rotation each frame ---
+    // Sphere geometry — points are initialised once and mutated in-place by
+    // rotateX / rotateY each frame so rotation accumulates over time.
     var dim       = 22;
     var spacing   = (Math.PI * 2) / dim;
     var numPoints = dim * dim;
@@ -130,97 +169,106 @@
       }
     }
 
-    // --- audio analysis state ---
-    // Since the play function runs on the audio thread we can't read its internal
-    // state directly. Instead we tap the output via a Web Audio AnalyserNode and
-    // derive proxies for the original a/b envelopes from the RMS amplitude.
+    // ---------------------------------------------------------------------------
+    // Audio analysis — AnalyserNode taps the worklet output on the main thread
+    // ---------------------------------------------------------------------------
     var analyser  = null;
     var freqData  = null;
     var timeData  = null;
-    var smoothedA = 0.5;   // proxy for _a — slower decay
-    var smoothedB = 0.33;  // proxy for _b — faster decay (different time constant)
+    // Smoothed amplitude proxies for the two envelope axes of sphere rotation.
+    // Using different time constants preserves the two-axis visual character of
+    // the original _a / _b envelopes.
+    var smoothedA = 0;
+    var smoothedB = 0;
 
-    // --- audio engine ---
+    // ---------------------------------------------------------------------------
+    // Audio engine init
+    // ---------------------------------------------------------------------------
     var maxi;
-    initAudioEngine("https://louismac.github.io/maximilian-js-local").then(function(dspEngine) {
+    initAudioEngine('https://louismac.github.io/maximilian-js-local').then(function(dspEngine) {
       maxi = dspEngine;
-      maxi.setAudioCode("myAudioScript");
+      maxi.setAudioCode(buildDSPCode(audioParams));
     });
 
-    // Play button is required: Web Audio needs a user gesture to start
+    // Play/stop — Web Audio requires a user gesture before the context can start
     var playing    = false;
-    var playButton = document.getElementById("playButton");
-    playButton.addEventListener("click", function() {
+    var playButton = document.getElementById('playButton');
+    playButton.addEventListener('click', function() {
       if (!maxi) return;
       if (!playing) {
         maxi.play();
         playing = true;
-        playButton.textContent = "stop";
+        playButton.textContent = 'stop';
 
-        // Wire up AnalyserNode after audio context is live
         if (!analyser && maxi.audioWorkletNode) {
           var audioCtx = maxi.audioWorkletNode.context;
-          analyser  = audioCtx.createAnalyser();
+          analyser = audioCtx.createAnalyser();
           analyser.fftSize = 2048;
-          freqData  = new Float32Array(analyser.frequencyBinCount);
-          timeData  = new Float32Array(analyser.fftSize);
+          freqData = new Float32Array(analyser.frequencyBinCount);
+          timeData = new Float32Array(analyser.fftSize);
           maxi.audioWorkletNode.connect(analyser);
         }
       } else {
         maxi.audioWorkletNode.context.suspend();
         playing = false;
-        playButton.textContent = "play";
+        playButton.textContent = 'play';
       }
     });
 
-    // --- draw loop ---
+    // ---------------------------------------------------------------------------
+    // Draw loop
+    // ---------------------------------------------------------------------------
     function draw() {
       if (analyser) {
         analyser.getFloatFrequencyData(freqData);
         analyser.getFloatTimeDomainData(timeData);
 
-        // RMS amplitude from time-domain signal
         var rms = 0;
         for (var k = 0; k < timeData.length; k++) rms += timeData[k] * timeData[k];
         rms = Math.sqrt(rms / timeData.length);
 
-        // Two smoothed envelopes with different time constants — proxy for _a and _b
+        // Two smoothed envelopes with different time constants (proxy for _a / _b)
         smoothedA = smoothedA * 0.90 + rms * 0.10;
         smoothedB = smoothedB * 0.95 + rms * 0.05;
       }
 
-      ctx.fillStyle = "rgb(0,0,0)";
+      ctx.fillStyle = 'rgb(0,0,0)';
       ctx.fillRect(0, 0, width, height);
 
+      // Rotation angles driven by amplitude envelopes, matching the original
+      // angleX = a/10, angleY = b/15 scaling at typical RMS values
       var angleX = smoothedA / 10;
       var angleY = smoothedB / 15;
 
       ctx.beginPath();
       for (var i = 0; i < numPoints; i++) {
         var point3d = points[i];
-        z3d = point3d[2];
-        if (z3d < -fov) z3d += 0;
-        point3d[2] = z3d;
 
         rotateX(point3d, angleX);
         rotateY(point3d, angleY);
 
-        // Spectral distortion: normalise AnalyserNode dB values to [0, 1]
+        // Spectral distortion: normalise AnalyserNode dB value to [0, 1] and use
+        // it as a radial scale factor so the sphere is always visible and inflates
+        // outward with spectral energy. Without audio mag stays at 0 so the sphere
+        // rests at its base unit size (1.0 * point3d coordinates).
         var mag = 0;
         if (freqData) {
           var dBVal = freqData[i % 20];
           mag = Math.max(0, (dBVal - analyser.minDecibels) / (analyser.maxDecibels - analyser.minDecibels));
         }
 
-        x3d = point3d[0] * mag * (smoothedA / 50);
-        y3d = point3d[1] * mag * (smoothedA / 50);
-        z3d = point3d[2] * mag * (smoothedA / 50);
+        // Base sphere (radialScale=1) is always the full size=200 unit sphere.
+        // FFT energy inflates it outward by up to 2× at full signal.
+        var radialScale = 1 + mag * 2;
+        x3d = point3d[0] * radialScale;
+        y3d = point3d[1] * radialScale;
+        z3d = point3d[2] * radialScale;
 
         var scale = fov / (fov + z3d);
         var x2d = (x3d * scale) + HALF_WIDTH / 2;
         var y2d = (y3d * scale) + height / 2;
 
-        ctx.strokeStyle = "rgb(255,255,255)";
+        ctx.strokeStyle = 'rgb(255,255,255)';
         ctx.moveTo(x2d, y2d);
         ctx.lineTo(lastX + scale, lastY);
         ctx.stroke();
@@ -233,23 +281,20 @@
 
     requestAnimationFrame(draw);
 
-    function rotateX(point3d, angleX) {
-      var x    = point3d[0];
-      var z    = point3d[2];
-      var cosA = Math.cos(angleX);
-      var sinA = Math.sin(angleX);
-      point3d[0] = (x * cosA) + (z * sinA);
-      point3d[2] = (x * -sinA) + (z * cosA);
+    function rotateX(point3d, angle) {
+      var x = point3d[0], z = point3d[2];
+      var c = Math.cos(angle), s = Math.sin(angle);
+      point3d[0] = x * c + z * s;
+      point3d[2] = x * -s + z * c;
     }
 
-    function rotateY(point3d, angleY) {
-      var y    = point3d[1];
-      var z    = point3d[2];
-      var cosA = Math.cos(angleY);
-      var sinA = Math.sin(angleY);
-      point3d[1] = (y * cosA) + (z * sinA);
-      point3d[2] = (y * -sinA) + (z * cosA);
+    function rotateY(point3d, angle) {
+      var y = point3d[1], z = point3d[2];
+      var c = Math.cos(angle), s = Math.sin(angle);
+      point3d[1] = y * c + z * s;
+      point3d[2] = y * -s + z * c;
     }
+
   </script>
 </body>
 </html>
