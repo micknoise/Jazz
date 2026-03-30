@@ -365,10 +365,11 @@
 
     // ── Render loop ──────────────────────────────────────────────────────────
     var clock     = new THREE.Clock();
-    var rmsSmooth = 0;
-    var prevRmsForEvent = 0;
-    window.jazzRMS    = 0;               // smoothed RMS, 0–0.3 range typical
-    window.jazzRotDir = [1, 1, 1];       // [x,y,z] rotation signs; flip on events
+    var rmsSmooth    = 0;
+    var peakBaseline = 0;  // slow-moving average of FFT peak — tracks "normal" level
+    var eventCooldown = 0; // seconds until next direction-flip is allowed
+    window.jazzRMS    = 0;         // smoothed RMS, exposed to variations
+    window.jazzRotDir = [1, 1, 1]; // per-axis rotation signs (±1), flip on events
 
     function draw() {
       var dt      = Math.min(clock.getDelta(), 0.05);
@@ -386,21 +387,26 @@
           if (fftArray[i] > peak) peak = fftArray[i];
         }
 
-        // 2. Compute raw RMS before boost (for rotation speed)
+        // 2. RMS for rotation speed (pre-boost values)
         var rawRms = 0;
         for (var j = 0; j < FFT_BINS; j++) rawRms += fftArray[j] * fftArray[j];
         rawRms = Math.sqrt(rawRms / FFT_BINS);
         rmsSmooth = rmsSmooth * 0.88 + rawRms * 0.12;
         window.jazzRMS = rmsSmooth;
 
-        // Detect audio event: RMS spike > 30% above recent level.
-        // On each event, randomly flip per-axis rotation directions.
-        if (rmsSmooth > prevRmsForEvent * 1.3 && rmsSmooth > 0.03) {
+        // Event detection — one-shot rising-edge with cooldown.
+        // peakBaseline tracks the long-term average peak bin; when the
+        // current peak is 2.5× that baseline we treat it as a new note event
+        // and flip rotation directions once.  The 250 ms cooldown prevents
+        // re-triggering while the envelope is still sustained.
+        eventCooldown = Math.max(0, eventCooldown - dt);
+        peakBaseline  = peakBaseline * 0.97 + peak * 0.03;
+        if (eventCooldown <= 0 && peak > peakBaseline * 2.5 && peak > 0.04) {
           window.jazzRotDir[0] = Math.random() > 0.5 ? 1 : -1;
           window.jazzRotDir[1] = Math.random() > 0.5 ? 1 : -1;
           window.jazzRotDir[2] = Math.random() > 0.5 ? 1 : -1;
+          eventCooldown = 0.25;
         }
-        prevRmsForEvent = prevRmsForEvent * 0.95 + rmsSmooth * 0.05;
 
         // 3. Boost: normalise to peak, add 30% floor so ALL vertices deform,
         //    then amplify 4× for dramatic effect.
