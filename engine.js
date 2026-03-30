@@ -263,48 +263,53 @@
       ].join('\n');
     }
 
-    // ── Audio / play button ──────────────────────────────────────────────────
-    // ENGINE IS NOT STARTED until the user clicks play.
-    // This guarantees no audio until user gesture, and avoids autoplay issues.
+    // ── Audio init (background, before first click) ──────────────────────────
+    // Load WASM + DSP code while the page is rendering so the engine is ready
+    // before the user clicks play. The AudioContext starts in 'suspended' state
+    // (browser autoplay policy), so no sound is produced until play() is called
+    // synchronously inside a user-gesture handler.
+    // We explicitly suspend after init as an extra safeguard.
     var analyser, floatFreqData;
     var playing = false, engineReady = false;
 
+    initAudioEngine('https://louismac.github.io/maximilian-js-local')
+      .then(function (dspEngine) {
+        maxi = dspEngine;
+        sendRealtimeParams();
+        maxi.setAudioCode(buildDSPCode(audioParams));
+        // Explicitly suspend to guarantee silence until the user clicks play,
+        // regardless of how the MIMIC engine initialises its AudioContext.
+        if (maxi.audioWorkletNode) {
+          maxi.audioWorkletNode.context.suspend();
+          var ctx = maxi.audioWorkletNode.context;
+          analyser = ctx.createAnalyser();
+          analyser.fftSize = FFT_BINS * 2;
+          floatFreqData = new Float32Array(analyser.frequencyBinCount);
+          maxi.audioWorkletNode.connect(analyser);
+        }
+        engineReady = true;
+        playBtn.textContent = 'play'; // overwrite 'loading…' if shown
+        playBtn.disabled = false;
+      });
+
+    // ── Play button ──────────────────────────────────────────────────────────
+    // maxi.play() is called *synchronously* inside the click handler so it runs
+    // within the browser's user-gesture window — the only time AudioContext
+    // .resume() is guaranteed to persist (async callbacks / setTimeout calls
+    // are outside the gesture window and the browser auto-suspends them).
     var playBtn = document.getElementById('playButton');
     playBtn.addEventListener('click', function () {
       if (!playing) {
         if (!engineReady) {
-          // First click: load WASM engine, set DSP code, start audio
+          // Engine still loading — show feedback and let the .then() above
+          // re-enable the button when ready.
           playBtn.textContent = 'loading…';
           playBtn.disabled = true;
-          initAudioEngine('https://louismac.github.io/maximilian-js-local')
-            .then(function (dspEngine) {
-              maxi = dspEngine;
-              sendRealtimeParams();
-              // setAudioCode uses an internal 50ms timer before eval'ing the
-              // DSP code into the worklet. We must wait for that to complete
-              // before calling play(), otherwise the audio context resumes
-              // before the DSP is loaded and produces silence on the first click.
-              maxi.setAudioCode(buildDSPCode(audioParams));
-              setTimeout(function () {
-                maxi.play();
-                engineReady = true;
-                playing = true;
-                playBtn.textContent = 'stop';
-                playBtn.disabled = false;
-                if (maxi.audioWorkletNode) {
-                  var ctx = maxi.audioWorkletNode.context;
-                  analyser = ctx.createAnalyser();
-                  analyser.fftSize = FFT_BINS * 2;
-                  floatFreqData = new Float32Array(analyser.frequencyBinCount);
-                  maxi.audioWorkletNode.connect(analyser);
-                }
-              }, 200);
-            });
-        } else {
-          maxi.audioWorkletNode.context.resume();
-          playing = true;
-          playBtn.textContent = 'stop';
+          return;
         }
+        maxi.play(); // synchronous resume — within user gesture ✓
+        playing = true;
+        playBtn.textContent = 'stop';
       } else {
         maxi.audioWorkletNode.context.suspend();
         playing = false;
