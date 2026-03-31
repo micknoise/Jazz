@@ -391,7 +391,7 @@
               // (which holds the freshest FFT shape + colour) dominates the view.
               // Farthest ring gets a brightness boost and thicker wireframe lines.
               var isFar = (i === farIdx);
-              var depthBright = isFar ? 1.4 : (0.07 + 0.93 * vizT);
+              var depthBright = isFar ? 1.4 : (0.25 + 0.75 * vizT);
 
               // Directional lighting modulated by ring's XY position
               var rx = r.mesh.position.x, ry = r.mesh.position.y;
