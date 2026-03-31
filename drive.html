@@ -355,10 +355,10 @@
 
             }
 
-            // ── Live ring: track farthest position, animate with current FFT ───
-            var farMesh = rings[farIdx].mesh;
-            liveMesh.position.copy(farMesh.position);
-            liveMesh.rotation.x = farMesh.rotation.x;
+            // ── Live ring: fixed distance from player, follows tunnel path ─────
+            var liveZ = -(NUM_RINGS * RING_SPACING);
+            var liveP  = tunnelPath(liveZ);
+            liveMesh.position.set(liveP.x, liveP.y, liveZ);
             liveMesh.rotation.z += 0.008 * dt * 60;   // slow independent spin
             liveMat.uniforms.uDeform.value = MAX_DEFORM;
             liveMat.uniforms.uTime.value   = elapsed;
