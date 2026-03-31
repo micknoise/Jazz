@@ -226,8 +226,8 @@
     bindSteer(tl, 'ArrowLeft');
     bindSteer(tr, 'ArrowRight');
 
-    // Tap overlay or canvas to start
-    overlay.addEventListener('touchstart', function (e) { e.preventDefault(); if (state !== 'playing') startGame(); }, { passive: false });
+    // Tap anywhere to start (overlay has pointer-events:none so listen on document)
+    document.addEventListener('touchstart', function (e) { if (state !== 'playing') startGame(); }, { passive: true });
     renderer.domElement.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
 
     // ── Loop ───────────────────────────────────────────────────────────────────
