@@ -91,8 +91,8 @@
     var COLLECT_R     = 20;
     var PLAYER_R      = 18;
     var STEER_SPEED   = 170;
-    var STEER_BOUNDS  = 90;
-    var STEER_BOUNDS_Y = 70;
+    var STEER_BOUNDS  = 130;
+    var STEER_BOUNDS_Y = 100;
     var BASE_SPEED    = 290;
     var SPEED_INC     = 38;
     var LEVEL_TIME    = 15;
@@ -113,17 +113,18 @@
 
     function gameSpeed() { return BASE_SPEED + (level - 1) * SPEED_INC; }
 
-    // Amplitude of tunnel path oscillation — zero at level 1, grows each level
-    function pathAmp() { return Math.min((level - 1) * 18, 105); }
+    // Amplitude grows with level; starts at 50 so even L1 has a visible lean
+    function pathAmp() { return 50 + Math.min((level - 1) * 35, 130); }
 
-    // Smooth sinusoidal tunnel centre at a given world-z position.
-    // Different X/Y frequencies give a Lissajous-like 3-D winding path.
-    // Phase is pure function of z so all rings form a coherent curve.
+    // Very slow sinusoidal path — one full S-bend takes ~30 s at L1 speed.
+    // X cycle ≈ 18 000 units (95 rings), Y cycle ≈ 26 000 units (137 rings).
+    // Within the 14-ring visible window (~2 660 units) you always see one
+    // smooth sweeping bend, never a rapid wiggle.
     function tunnelPath(z) {
       var a = pathAmp();
       return {
-        x: Math.sin(z * 0.00105) * a,
-        y: Math.cos(z * 0.00072) * a * 0.55
+        x: Math.sin(z * 0.00035) * a,
+        y: Math.cos(z * 0.00024) * a * 0.55
       };
     }
 
