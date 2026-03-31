@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <script src="./enable-threads.js"></script>
+  <script src="./maximilian.v.0.1.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -11,6 +13,9 @@
     #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; }
     a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
     a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    button:disabled { opacity: 0.35; cursor: default; }
     #hud { position: absolute; top: 16px; right: 16px; color: white; font-family: monospace; font-size: 13px; text-align: right; pointer-events: none; line-height: 2; }
     #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: white; font-family: monospace; text-align: center; pointer-events: none; }
     #overlay h1 { font-size: 36px; font-weight: normal; letter-spacing: 0.2em; margin-bottom: 12px; }
@@ -35,6 +40,7 @@
 <body>
   <div id="ui">
     <a class="back" href="index.html">← gallery</a>
+    <button id="playButton" disabled>music</button>
   </div>
   <div id="hud">
     <div id="hud-score">score  0</div>
@@ -162,6 +168,38 @@
       rings.push(mesh);
     }
 
+    // ── Obstacles (audio-event driven) ────────────────────────────────────────
+    var NUM_HAZARDS = 8;
+    var HAZARD_R    = 20;
+    var hazardMat   = makeMat(0xff7700, 2.5);
+    hazardMat.uniforms.uPulse.value = 0.06;
+    var hazards     = [];
+    for (var h = 0; h < NUM_HAZARDS; h++) {
+      var hm = new THREE.Mesh(addBary(new THREE.IcosahedronGeometry(18, 1)), hazardMat);
+      hm.visible = false;
+      scene.add(hm);
+      hazards.push(hm);
+    }
+
+    function spawnHazard() {
+      for (var h = 0; h < hazards.length; h++) {
+        if (!hazards[h].visible) {
+          hazards[h].position.set(
+            (Math.random() * 2 - 1) * (STEER_BOUNDS * 0.85),
+            (Math.random() - 0.5) * 50,
+            -2200
+          );
+          hazards[h].rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+          hazards[h].visible = true;
+          return;
+        }
+      }
+    }
+
+    function resetHazards() {
+      for (var h = 0; h < hazards.length; h++) hazards[h].visible = false;
+    }
+
     // ── HUD ────────────────────────────────────────────────────────────────────
     var hudScore     = document.getElementById('hud-score');
     var hudLevel     = document.getElementById('hud-level');
@@ -193,6 +231,7 @@
       camera.rotation.set(0, 0, 0);
       ringMat.uniforms.uColor.value.setRGB(1, 1, 1);
       resetRings();
+      resetHazards();
       state = 'playing';
       overlay.style.display = 'none';
       document.getElementById('hint').style.display = 'none';
@@ -230,6 +269,65 @@
     document.addEventListener('touchstart', function (e) { if (state !== 'playing') startGame(); }, { passive: true });
     renderer.domElement.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
 
+    // ── Audio (FM synth — same engine as Jazz variations) ─────────────────────
+    var maxi, audioReady = false, audioPlaying = false;
+
+    // c.tick (fast clock) fires the beat event → push to Output("beat") → maxi.onInput
+    var DSP_CODE = [
+      'var o1=new Maximilian.maxiOsc(), o2=new Maximilian.maxiOsc();',
+      'var c=new Maximilian.maxiClock(), d=new Maximilian.maxiClock();',
+      'var beatOut=new Output("beat");',
+      'c.setTempo(128); c.setTicksPerBeat(4);',
+      'd.setTempo(128); d.setTicksPerBeat(1);',
+      'var _a=0.5,_b=0.5,_fb=0.9999,_bfb=0.9999,_f=400,_f2=50,_mi=650;',
+      'function play(){',
+      '  c.ticker(); d.ticker();',
+      '  if(d.tick&&Math.random()>0.2){',
+      '    c.setTicksPerBeat(Math.floor(1+Math.random()*14));',
+      '    _a=1;_b=1;_bfb=Math.random()>0.75?1.00001:0.995;_f2=100;_mi=1;',
+      '  }',
+      '  if(c.tick&&Math.random()>0.25&&!d.tick){',
+      '    _f=400+(Math.random()*800);_a=1;_b=1;',
+      '    _fb=0.999+(Math.random()*0.001);_bfb=0.999+(Math.random()*0.001);',
+      '    _f2=Math.random()*300;_mi=Math.random()*20000;',
+      '    beatOut.push([1.0]);',
+      '  }',
+      '  _a*=_fb;_b*=_bfb;',
+      '  return o1.sinewave((_f*_b)+(o2.sinewave(_f2)*_mi))*_a;',
+      '}'
+    ].join('\n');
+
+    var playBtn = document.getElementById('playButton');
+
+    initAudioEngine('https://louismac.github.io/maximilian-js-local')
+      .then(function (engine) {
+        maxi = engine;
+        maxi.setAudioCode(DSP_CODE);
+        // Receive beat events from DSP clock → spawn obstacle
+        maxi.onInput = function (channel) {
+          if (channel === 'beat' && state === 'playing') spawnHazard();
+        };
+        if (maxi.audioWorkletNode) {
+          maxi.audioWorkletNode.context.suspend();
+        }
+        audioReady = true;
+        playBtn.textContent = 'music';
+        playBtn.disabled    = false;
+      });
+
+    playBtn.addEventListener('click', function () {
+      if (!audioReady) return;
+      if (!audioPlaying) {
+        maxi.play();
+        audioPlaying = true;
+        playBtn.textContent = 'mute';
+      } else {
+        maxi.audioWorkletNode.context.suspend();
+        audioPlaying = false;
+        playBtn.textContent = 'music';
+      }
+    });
+
     // ── Loop ───────────────────────────────────────────────────────────────────
     var clock   = new THREE.Clock();
     var elapsed = 0;
@@ -240,7 +338,8 @@
       elapsed += dt;
 
       // Always update shader time for idle pulse animation
-      ringMat.uniforms.uTime.value = elapsed;
+      ringMat.uniforms.uTime.value   = elapsed;
+      hazardMat.uniforms.uTime.value = elapsed;
 
       if (state === 'playing') {
         levelTimer += dt;
@@ -278,6 +377,26 @@
             var dx   = camera.position.x - rings[i].position.x;
             var dy   = camera.position.y - rings[i].position.y;
             if (Math.sqrt(dx * dx + dy * dy) > SAFE_DIST) {
+              crash();
+              return;
+            }
+          }
+        }
+
+        // ── Hazards ──────────────────────────────────────────────────────────
+        for (var hi = 0; hi < hazards.length; hi++) {
+          if (!hazards[hi].visible) continue;
+          hazards[hi].position.z += spd * dt;
+          hazards[hi].rotation.x += 0.02 * dt * 60;
+          hazards[hi].rotation.y += 0.015 * dt * 60;
+
+          if (hazards[hi].position.z > 150) { hazards[hi].visible = false; continue; }
+
+          var hz = hazards[hi].position.z;
+          if (hz > -60 && hz < 60) {
+            var hdx = camera.position.x - hazards[hi].position.x;
+            var hdy = camera.position.y - hazards[hi].position.y;
+            if (Math.sqrt(hdx * hdx + hdy * hdy) < HAZARD_R + PLAYER_R) {
               crash();
               return;
             }
