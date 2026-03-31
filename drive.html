@@ -193,6 +193,25 @@
         }
 
         // ── Collectibles ───────────────────────────────────────────────────────
+        // ── Live ring — sits on top of the farthest frozen ring, animates with
+        // the current FFT every frame. Uses the shared engine texture (no uFFT
+        // override) so it always shows the present moment while the frozen rings
+        // behind it hold the musical past.
+        var liveMat = new THREE.ShaderMaterial({
+          vertexShader:   ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({ uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 },
+                                      uColor: { value: new THREE.Color(1, 1, 1) } }),
+          transparent: true, depthWrite: false
+        });
+        var liveMesh = new THREE.Mesh(
+          addBarycentricCoords(new THREE.TorusGeometry(RING_RADIUS, RING_TUBE, 8, 48)),
+          liveMat
+        );
+        liveMesh.renderOrder = 2;   // always on top of everything
+        liveMat.uniforms.uLineWidth.value = 2.5;
+        scene.add(liveMesh);
+
         var collectMat = new THREE.ShaderMaterial({
           vertexShader:   ss.vertexShader,
           fragmentShader: ss.fragmentShader,
@@ -333,7 +352,16 @@
             var farIdx = 0;
             for (var i = 1; i < rings.length; i++) {
               if (rings[i].mesh.position.z < rings[farIdx].mesh.position.z) farIdx = i;
+
             }
+
+            // ── Live ring: track farthest position, animate with current FFT ───
+            var farMesh = rings[farIdx].mesh;
+            liveMesh.position.copy(farMesh.position);
+            liveMesh.rotation.x = farMesh.rotation.x;
+            liveMesh.rotation.z += 0.008 * dt * 60;   // slow independent spin
+            liveMat.uniforms.uDeform.value = MAX_DEFORM;
+            liveMat.uniforms.uTime.value   = elapsed;
 
             // Slowly-rotating directional light: rings on the lit side glow,
             // rings on the shadow side are dim, creating depth cues on the tunnel.
