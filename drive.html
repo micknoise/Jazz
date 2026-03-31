@@ -3,6 +3,7 @@
 <head>
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Jazz — Drive</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -15,6 +16,20 @@
     #overlay h1 { font-size: 36px; font-weight: normal; letter-spacing: 0.2em; margin-bottom: 12px; }
     #overlay p  { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: 0.1em; }
     #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.25); font-size: 11px; font-family: monospace; pointer-events: none; }
+    #touch-left, #touch-right {
+      position: fixed; bottom: 0; width: 42%; height: 130px; z-index: 10;
+      display: flex; align-items: center; justify-content: center;
+      font-family: monospace; font-size: 24px;
+      color: rgba(255,255,255,0.2);
+      border-top: 1px solid rgba(255,255,255,0.1);
+      user-select: none; -webkit-user-select: none; touch-action: none;
+      transition: background 0.08s, color 0.08s;
+    }
+    #touch-left  { left: 0;  border-right: 1px solid rgba(255,255,255,0.06); }
+    #touch-right { right: 0; }
+    #touch-left.active, #touch-right.active {
+      background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.7);
+    }
   </style>
 </head>
 <body>
@@ -30,6 +45,8 @@
     <p  id="overlay-msg">space / enter to start  ·  ← → to steer</p>
   </div>
   <div id="hint">← → or a d  ·  steer through the rings</div>
+  <div id="touch-left">◀</div>
+  <div id="touch-right">▶</div>
 
   <script>
   (function () {
@@ -196,6 +213,22 @@
       if ((e.code === 'Space' || e.code === 'Enter') && state !== 'playing') startGame();
     });
     document.addEventListener('keyup', function (e) { keys[e.code] = false; });
+
+    // Touch controls
+    var tl = document.getElementById('touch-left');
+    var tr = document.getElementById('touch-right');
+
+    function bindSteer(el, code) {
+      el.addEventListener('touchstart',  function (e) { e.preventDefault(); keys[code] = true;  el.classList.add('active'); },    { passive: false });
+      el.addEventListener('touchend',    function (e) { e.preventDefault(); keys[code] = false; el.classList.remove('active'); }, { passive: false });
+      el.addEventListener('touchcancel', function (e) { e.preventDefault(); keys[code] = false; el.classList.remove('active'); }, { passive: false });
+    }
+    bindSteer(tl, 'ArrowLeft');
+    bindSteer(tr, 'ArrowRight');
+
+    // Tap overlay or canvas to start
+    overlay.addEventListener('touchstart', function (e) { e.preventDefault(); if (state !== 'playing') startGame(); }, { passive: false });
+    renderer.domElement.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
 
     // ── Loop ───────────────────────────────────────────────────────────────────
     var clock   = new THREE.Clock();
