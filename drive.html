@@ -21,18 +21,42 @@
     #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: white; font-family: monospace; text-align: center; pointer-events: none; }
     #overlay h1 { font-size: 36px; font-weight: normal; letter-spacing: 0.2em; margin-bottom: 12px; }
     #overlay p  { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: 0.1em; }
-    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.25); font-size: 11px; font-family: monospace; pointer-events: none; }
+    #hint { position: absolute; bottom: 146px; left: 16px; color: rgba(255,255,255,0.25); font-size: 11px; font-family: monospace; pointer-events: none; }
+
+    /* ── Touch controls: 3-column D-pad at bottom ─────────────────────────── */
     #touch-left, #touch-right {
-      position: fixed; bottom: 0; width: 42%; height: 130px; z-index: 10;
+      position: fixed; bottom: 0; width: 35%; height: 130px; z-index: 10;
       display: flex; align-items: center; justify-content: center;
       font-family: monospace; font-size: 24px; color: rgba(255,255,255,0.2);
       border-top: 1px solid rgba(255,255,255,0.1);
       user-select: none; -webkit-user-select: none; touch-action: none;
       transition: background 0.08s, color 0.08s;
     }
-    #touch-left  { left: 0; border-right: 1px solid rgba(255,255,255,0.06); }
-    #touch-right { right: 0; }
-    #touch-left.active, #touch-right.active { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.7); }
+    #touch-left  { left: 0;  border-right: 1px solid rgba(255,255,255,0.06); }
+    #touch-right { right: 0; border-left:  1px solid rgba(255,255,255,0.06); }
+
+    #touch-up, #touch-down {
+      position: fixed; left: 35%; width: 30%; height: 65px; z-index: 10;
+      display: flex; align-items: center; justify-content: center;
+      font-family: monospace; font-size: 22px; color: rgba(255,255,255,0.2);
+      user-select: none; -webkit-user-select: none; touch-action: none;
+      transition: background 0.08s, color 0.08s;
+    }
+    #touch-up {
+      bottom: 65px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    #touch-down {
+      bottom: 0;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-top: none;
+    }
+
+    #touch-left.active, #touch-right.active,
+    #touch-up.active,   #touch-down.active {
+      background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.7);
+    }
   </style>
 </head>
 <body>
@@ -47,33 +71,37 @@
   </div>
   <div id="overlay">
     <h1 id="overlay-title">drive</h1>
-    <p  id="overlay-msg">tap to start  ·  ← → to steer  ·  collect the cyan</p>
+    <p  id="overlay-msg">tap to start  ·  steer with arrows  ·  collect the cyan</p>
   </div>
-  <div id="hint">press play for music  ·  ← → or a d to steer</div>
+  <div id="hint">← → ↑ ↓  or  a d w s  to steer  ·  collect cyan orbs</div>
   <div id="touch-left">◀</div>
   <div id="touch-right">▶</div>
+  <div id="touch-up">▲</div>
+  <div id="touch-down">▼</div>
 
   <script>
     // ── Constants ──────────────────────────────────────────────────────────────
-    var NUM_RINGS    = 14;
-    var FFT_BINS     = 256;
-    var RING_SPACING = 190;
-    var RING_RADIUS  = 112;
-    var RING_TUBE    = 7;
-    var SAFE_DIST    = (RING_RADIUS - RING_TUBE) - 18;  // ~87
-    var NUM_COLLECT  = 8;
-    var COLLECT_R    = 20;
-    var PLAYER_R     = 18;
-    var STEER_SPEED  = 170;
-    var STEER_BOUNDS = 95;
-    var BASE_SPEED   = 290;
-    var SPEED_INC    = 38;
-    var LEVEL_TIME   = 15;
-    var MAX_DEFORM   = 500;  // farthest ring deform; scales to 0 at camera
+    var NUM_RINGS     = 14;
+    var FFT_BINS      = 256;
+    var RING_SPACING  = 190;
+    var RING_RADIUS   = 112;
+    var RING_TUBE     = 7;
+    var SAFE_DIST     = (RING_RADIUS - RING_TUBE) - 18;  // ~87
+    var NUM_COLLECT   = 8;
+    var COLLECT_R     = 20;
+    var PLAYER_R      = 18;
+    var STEER_SPEED   = 170;
+    var STEER_BOUNDS  = 90;
+    var STEER_BOUNDS_Y = 70;
+    var BASE_SPEED    = 290;
+    var SPEED_INC     = 38;
+    var LEVEL_TIME    = 15;
+    var MAX_DEFORM    = 500;
 
     // ── Game state ─────────────────────────────────────────────────────────────
     var gameState = 'idle';
-    var score = 0, level = 1, levelTimer = 0, playerX = 0;
+    var score = 0, level = 1, levelTimer = 0;
+    var playerX = 0, playerY = 0;
     var eventCooldown = 0;
     var gameKeys = {};
 
@@ -84,9 +112,22 @@
     var overlayMsg   = document.getElementById('overlay-msg');
 
     function gameSpeed() { return BASE_SPEED + (level - 1) * SPEED_INC; }
-    function maxOffset() { return Math.min((level - 1) * 13, 82); }
 
-    // ── Input (outer scope — calls window.startGame set up by sceneSetup) ──────
+    // Amplitude of tunnel path oscillation — zero at level 1, grows each level
+    function pathAmp() { return Math.min((level - 1) * 18, 105); }
+
+    // Smooth sinusoidal tunnel centre at a given world-z position.
+    // Different X/Y frequencies give a Lissajous-like 3-D winding path.
+    // Phase is pure function of z so all rings form a coherent curve.
+    function tunnelPath(z) {
+      var a = pathAmp();
+      return {
+        x: Math.sin(z * 0.00105) * a,
+        y: Math.cos(z * 0.00072) * a * 0.55
+      };
+    }
+
+    // ── Input (outer scope) ────────────────────────────────────────────────────
     document.addEventListener('keydown', function (e) {
       gameKeys[e.code] = true;
       if ((e.code === 'Space' || e.code === 'Enter') && gameState !== 'playing') {
@@ -95,15 +136,15 @@
     });
     document.addEventListener('keyup', function (e) { gameKeys[e.code] = false; });
 
-    var tl = document.getElementById('touch-left');
-    var tr = document.getElementById('touch-right');
     function bindSteer(el, code) {
       el.addEventListener('touchstart',  function (e) { e.preventDefault(); gameKeys[code] = true;  el.classList.add('active'); },    { passive: false });
       el.addEventListener('touchend',    function (e) { e.preventDefault(); gameKeys[code] = false; el.classList.remove('active'); }, { passive: false });
       el.addEventListener('touchcancel', function (e) { e.preventDefault(); gameKeys[code] = false; el.classList.remove('active'); }, { passive: false });
     }
-    bindSteer(tl, 'ArrowLeft');
-    bindSteer(tr, 'ArrowRight');
+    bindSteer(document.getElementById('touch-left'),  'ArrowLeft');
+    bindSteer(document.getElementById('touch-right'), 'ArrowRight');
+    bindSteer(document.getElementById('touch-up'),    'ArrowUp');
+    bindSteer(document.getElementById('touch-down'),  'ArrowDown');
 
     document.addEventListener('touchstart', function () {
       if (gameState !== 'playing' && window.startGame) window.startGame();
@@ -131,10 +172,7 @@
 
       sceneSetup: function (scene, camera, ss) {
 
-        // ── Per-ring materials, each with its own FFT snapshot texture ─────────
-        // When a ring recycles to the back, it snapshots the current fftArray.
-        // uDeform scales from MAX_DEFORM at the far end to 0 at the camera —
-        // so the wormhole carries a living record of the music as rings approach.
+        // ── Per-ring materials with individual FFT snapshot textures ───────────
         var rings = [];
         for (var i = 0; i < NUM_RINGS; i++) {
           var fftData = new Float32Array(FFT_BINS);
@@ -154,12 +192,13 @@
           );
           rmesh.position.z = -(i + 1) * RING_SPACING;
           scene.add(rmesh);
+          // spinSpeed range ~[0.003, 0.039] — wide spread for visual variety
           rings.push({ mesh: rmesh, mat: rmat, fftData: fftData, fftTex: fftTex,
                        color: new THREE.Color(1, 1, 1),
-                       spinSpeed: 0.004 + Math.random() * 0.032 });  // range ~[0.004, 0.036]
+                       spinSpeed: 0.003 + Math.random() * 0.036 });
         }
 
-        // ── Collectibles (cyan icosahedra, spawned on audio beats) ────────────
+        // ── Collectibles ───────────────────────────────────────────────────────
         var collectMat = new THREE.ShaderMaterial({
           vertexShader:   ss.vertexShader,
           fragmentShader: ss.fragmentShader,
@@ -178,35 +217,43 @@
         }
 
         // ── Helpers ────────────────────────────────────────────────────────────
+
+        // Place ring at zPos on the wormhole path, snapshot FFT for colour+deform
         function spawnRing(ring, zPos, fftArray) {
-          var mo = maxOffset();
-          ring.mesh.position.set(mo > 0 ? (Math.random() * 2 - 1) * mo : 0, 0, zPos);
+          var p = tunnelPath(zPos);
+          ring.mesh.position.set(p.x, p.y, zPos);
           ring.mesh.rotation.z = Math.random() * Math.PI * 2;
           ring.mesh.rotation.x = (Math.random() - 0.5) * 0.12;
+
           if (fftArray) {
-            var sum = 0, sqSum = 0;
+            var sum = 0, sqSum = 0, weightedSum = 0;
             for (var k = 0; k < FFT_BINS; k++) {
               ring.fftData[k] = fftArray[k];
-              sum   += fftArray[k];
-              sqSum += fftArray[k] * fftArray[k];
+              sum         += fftArray[k];
+              sqSum       += fftArray[k] * fftArray[k];
+              weightedSum += k * fftArray[k];
             }
             ring.fftTex.needsUpdate = true;
-            // Hue from avg frequency content; luminance from RMS energy (0.5–1.0)
-            var hue = sum / FFT_BINS;
+            // Spectral centroid → hue (0–1 across spectrum, bass=red, treble=magenta)
+            var hue = sum > 0.001 ? (weightedSum / sum) / FFT_BINS : Math.random();
             var rms = Math.sqrt(sqSum / FFT_BINS);
-            var lum = 0.5 + 0.5 * Math.min(rms * 2.5, 1.0);
+            // Luminance 0.35–0.60: never approaches white, stays richly saturated
+            var lum = 0.35 + 0.25 * Math.min(rms * 4.0, 1.0);
             ring.mat.uniforms.uColor.value.setHSL(hue, 1.0, lum);
             ring.color.copy(ring.mat.uniforms.uColor.value);
           }
         }
 
+        // Spawn collectible centred on the tunnel path at the far spawn point
         function spawnCollectible() {
           for (var c = 0; c < collectibles.length; c++) {
             if (!collectibles[c].visible) {
+              var spawnZ = -2200;
+              var p = tunnelPath(spawnZ);
               collectibles[c].position.set(
-                (Math.random() * 2 - 1) * (STEER_BOUNDS * 0.8),
-                (Math.random() - 0.5) * 20,
-                -2200
+                p.x + (Math.random() * 2 - 1) * 35,
+                p.y + (Math.random() * 2 - 1) * 28,
+                spawnZ
               );
               collectibles[c].rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
               collectibles[c].visible = true;
@@ -216,16 +263,17 @@
         }
 
         function resetAll() {
-          for (var i = 0; i < rings.length; i++)       spawnRing(rings[i], -(i + 1) * RING_SPACING, null);
-          for (var c = 0; c < collectibles.length; c++) collectibles[c].visible = false;
-          rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 1, 1); });
-          playerX = 0; score = 0; level = 1; levelTimer = 0; eventCooldown = 0;
+          for (var i = 0; i < rings.length; i++)
+            spawnRing(rings[i], -(i + 1) * RING_SPACING, null);
+          for (var c = 0; c < collectibles.length; c++)
+            collectibles[c].visible = false;
+          rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 1, 1); r.color.setRGB(1,1,1); });
+          playerX = 0; playerY = 0;
+          score = 0; level = 1; levelTimer = 0; eventCooldown = 0;
           camera.position.set(0, 0, 0);
           camera.rotation.set(0, 0, 0);
         }
 
-        // Exposed on window so outer-scope touch/key handlers can call it.
-        // Also programmatically clicks "play" to start audio in the same gesture.
         window.startGame = function () {
           resetAll();
           var pb = document.getElementById('playButton');
@@ -245,13 +293,12 @@
           }, 900);
         }
 
-        // ── Per-frame update (engine.js calls this each frame) ─────────────────
+        // ── Per-frame update ───────────────────────────────────────────────────
         return {
           update: function (fftArray, elapsed, dt) {
 
-            // Disable engine free-fly: lock z/y, game drives x
+            // Lock z — game drives x/y
             camera.position.z = 0;
-            camera.position.y = 0;
             collectMat.uniforms.uTime.value = elapsed;
 
             if (gameState !== 'playing') return;
@@ -260,44 +307,70 @@
             score      += dt * gameSpeed() * 0.1;
             if (levelTimer >= LEVEL_TIME) { level++; levelTimer = 0; }
 
-            // Steer — gameKeys tracks both keyboard and touch
-            var steer = 0;
-            if (gameKeys['ArrowLeft']  || gameKeys['KeyA']) steer = -1;
-            if (gameKeys['ArrowRight'] || gameKeys['KeyD']) steer =  1;
-            playerX = Math.max(-STEER_BOUNDS, Math.min(STEER_BOUNDS, playerX + steer * STEER_SPEED * dt));
-            camera.position.x += (playerX - camera.position.x) * 9 * dt;
-            camera.rotation.z += (-steer * 0.045 - camera.rotation.z) * 12 * dt;
-            camera.rotation.x  = 0;
-            camera.rotation.y  = 0;
+            // ── Steer ────────────────────────────────────────────────────────
+            var steer = 0, steerY = 0;
+            if (gameKeys['ArrowLeft']  || gameKeys['KeyA']) steer  = -1;
+            if (gameKeys['ArrowRight'] || gameKeys['KeyD']) steer  =  1;
+            if (gameKeys['ArrowUp']    || gameKeys['KeyW']) steerY =  1;
+            if (gameKeys['ArrowDown']  || gameKeys['KeyS']) steerY = -1;
 
-            // Timer-based collectible spawning: sparse at start, denser with level
-            // Level 1 → ~6 s interval; each level cuts ~0.4 s, floor at 1.5 s
+            playerX = Math.max(-STEER_BOUNDS,   Math.min(STEER_BOUNDS,   playerX + steer  * STEER_SPEED * dt));
+            playerY = Math.max(-STEER_BOUNDS_Y, Math.min(STEER_BOUNDS_Y, playerY + steerY * STEER_SPEED * dt));
+
+            camera.position.x += (playerX - camera.position.x) * 9 * dt;
+            camera.position.y += (playerY - camera.position.y) * 9 * dt;
+
+            // Bank left/right; tilt up/down to match steering feel
+            camera.rotation.z += (-steer  * 0.045 - camera.rotation.z) * 12 * dt;
+
+            // ── Camera leans into tunnel direction ───────────────────────────
+            // Average centre of rings 100–600 units ahead to find "where we're heading"
+            var lookX = 0, lookY = 0, lc = 0;
+            for (var i = 0; i < rings.length; i++) {
+              var rz = rings[i].mesh.position.z;
+              if (rz < -100 && rz > -600) {
+                lookX += rings[i].mesh.position.x;
+                lookY += rings[i].mesh.position.y;
+                lc++;
+              }
+            }
+            if (lc > 0) { lookX /= lc; lookY /= lc; }
+            // Subtle lean: rotate toward tunnel centre ahead; steerY adds extra tilt
+            var tgtRotX =  (lookY - camera.position.y) * 0.0009 - steerY * 0.04;
+            var tgtRotY = -(lookX - camera.position.x) * 0.0009;
+            camera.rotation.x += (tgtRotX - camera.rotation.x) * 5 * dt;
+            camera.rotation.y += (tgtRotY - camera.rotation.y) * 5 * dt;
+
+            // ── Timer-based collectible spawning ─────────────────────────────
             eventCooldown = Math.max(0, eventCooldown - dt);
             if (eventCooldown <= 0) {
               spawnCollectible();
               var interval = Math.max(1.5, 6.0 - (level - 1) * 0.4);
-              eventCooldown = interval * (0.7 + Math.random() * 0.6); // ±30% jitter
+              eventCooldown = interval * (0.7 + Math.random() * 0.6);
             }
 
             var spd = gameSpeed();
 
-            // Rings — per-ring deform fades from MAX_DEFORM (far) to 0 (near)
+            // ── Rings ────────────────────────────────────────────────────────
             for (var i = 0; i < rings.length; i++) {
               var r = rings[i];
               r.mesh.position.z += spd * dt;
-              r.mesh.rotation.z += window.jazzRotDir[2] * r.spinSpeed * (1.0 + window.jazzRMS * 3.0) * dt * 60;
 
+              // Deform fades from MAX_DEFORM (far) → 0 (near camera)
               var t = Math.max(0, Math.min(1, -r.mesh.position.z / (NUM_RINGS * RING_SPACING)));
               r.mat.uniforms.uDeform.value = MAX_DEFORM * t;
               r.mat.uniforms.uTime.value   = elapsed;
 
-              // Recycle: snapshot current FFT onto the ring as it respawns at the back
+              r.mesh.rotation.z += window.jazzRotDir[2] * r.spinSpeed * (1.0 + window.jazzRMS * 3.0) * dt * 60;
+
+              // Recycle to back, snapshotting current FFT
               if (r.mesh.position.z > 120) {
                 var minZ = Infinity;
                 for (var j = 0; j < rings.length; j++) minZ = Math.min(minZ, rings[j].mesh.position.z);
                 spawnRing(r, minZ - RING_SPACING, fftArray);
               }
 
+              // Crash: player outside ring opening
               var rz = r.mesh.position.z;
               if (rz > -90 && rz < 90) {
                 var dx = camera.position.x - r.mesh.position.x;
@@ -306,7 +379,7 @@
               }
             }
 
-            // Collectibles — collect on proximity, +500 points
+            // ── Collectibles ─────────────────────────────────────────────────
             for (var ci = 0; ci < collectibles.length; ci++) {
               if (!collectibles[ci].visible) continue;
               collectibles[ci].position.z += spd * dt;
