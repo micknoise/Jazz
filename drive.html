@@ -40,7 +40,7 @@
 <body>
   <div id="ui">
     <a class="back" href="index.html">← gallery</a>
-    <button id="playButton" disabled>music</button>
+    <button id="playButton" disabled>loading…</button>
   </div>
   <div id="hud">
     <div id="hud-score">score  0</div>
@@ -303,7 +303,6 @@
       .then(function (engine) {
         maxi = engine;
         maxi.setAudioCode(DSP_CODE);
-        // Receive beat events from DSP clock → spawn obstacle
         maxi.onInput = function (channel) {
           if (channel === 'beat' && state === 'playing') spawnHazard();
         };
@@ -313,12 +312,16 @@
         audioReady = true;
         playBtn.textContent = 'music';
         playBtn.disabled    = false;
+      })
+      .catch(function () {
+        playBtn.textContent = 'music';
+        playBtn.disabled    = false;
       });
 
     playBtn.addEventListener('click', function () {
-      if (!audioReady) return;
       if (!audioPlaying) {
-        maxi.play();
+        if (!audioReady) { playBtn.textContent = 'loading…'; return; }
+        maxi.audioWorkletNode.context.resume();
         audioPlaying = true;
         playBtn.textContent = 'mute';
       } else {
