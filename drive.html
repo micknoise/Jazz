@@ -74,7 +74,7 @@
     // ── Game state ─────────────────────────────────────────────────────────────
     var gameState = 'idle';
     var score = 0, level = 1, levelTimer = 0, playerX = 0;
-    var eventCooldown = 0, peakBaseline = 0;
+    var eventCooldown = 0;
     var gameKeys = {};
 
     var hudScore     = document.getElementById('hud-score');
@@ -154,7 +154,9 @@
           );
           rmesh.position.z = -(i + 1) * RING_SPACING;
           scene.add(rmesh);
-          rings.push({ mesh: rmesh, mat: rmat, fftData: fftData, fftTex: fftTex });
+          rings.push({ mesh: rmesh, mat: rmat, fftData: fftData, fftTex: fftTex,
+                       color: new THREE.Color(1, 1, 1),
+                       spinSpeed: 0.004 + Math.random() * 0.032 });  // range ~[0.004, 0.036]
         }
 
         // ── Collectibles (cyan icosahedra, spawned on audio beats) ────────────
@@ -182,8 +184,19 @@
           ring.mesh.rotation.z = Math.random() * Math.PI * 2;
           ring.mesh.rotation.x = (Math.random() - 0.5) * 0.12;
           if (fftArray) {
-            for (var k = 0; k < FFT_BINS; k++) ring.fftData[k] = fftArray[k];
+            var sum = 0, sqSum = 0;
+            for (var k = 0; k < FFT_BINS; k++) {
+              ring.fftData[k] = fftArray[k];
+              sum   += fftArray[k];
+              sqSum += fftArray[k] * fftArray[k];
+            }
             ring.fftTex.needsUpdate = true;
+            // Hue from avg frequency content; luminance from RMS energy (0.5–1.0)
+            var hue = sum / FFT_BINS;
+            var rms = Math.sqrt(sqSum / FFT_BINS);
+            var lum = 0.5 + 0.5 * Math.min(rms * 2.5, 1.0);
+            ring.mat.uniforms.uColor.value.setHSL(hue, 1.0, lum);
+            ring.color.copy(ring.mat.uniforms.uColor.value);
           }
         }
 
@@ -206,7 +219,7 @@
           for (var i = 0; i < rings.length; i++)       spawnRing(rings[i], -(i + 1) * RING_SPACING, null);
           for (var c = 0; c < collectibles.length; c++) collectibles[c].visible = false;
           rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 1, 1); });
-          playerX = 0; score = 0; level = 1; levelTimer = 0;
+          playerX = 0; score = 0; level = 1; levelTimer = 0; eventCooldown = 0;
           camera.position.set(0, 0, 0);
           camera.rotation.set(0, 0, 0);
         }
@@ -228,7 +241,7 @@
           overlayMsg.textContent   = 'score  ' + Math.floor(score) + '   ·   tap to retry';
           overlay.style.display    = '';
           setTimeout(function () {
-            rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 1, 1); });
+            rings.forEach(function (r) { r.mat.uniforms.uColor.value.copy(r.color); });
           }, 900);
         }
 
@@ -257,14 +270,13 @@
             camera.rotation.x  = 0;
             camera.rotation.y  = 0;
 
-            // FFT beat detection → spawn collectible
-            var peak = 0;
-            for (var fi = 0; fi < fftArray.length; fi++) if (fftArray[fi] > peak) peak = fftArray[fi];
-            peakBaseline  = peakBaseline * 0.99 + peak * 0.01;
+            // Timer-based collectible spawning: sparse at start, denser with level
+            // Level 1 → ~6 s interval; each level cuts ~0.4 s, floor at 1.5 s
             eventCooldown = Math.max(0, eventCooldown - dt);
-            if (eventCooldown <= 0 && peak > peakBaseline * 1.5 && peak > 0.02) {
+            if (eventCooldown <= 0) {
               spawnCollectible();
-              eventCooldown = 0.4;
+              var interval = Math.max(1.5, 6.0 - (level - 1) * 0.4);
+              eventCooldown = interval * (0.7 + Math.random() * 0.6); // ±30% jitter
             }
 
             var spd = gameSpeed();
@@ -273,7 +285,7 @@
             for (var i = 0; i < rings.length; i++) {
               var r = rings[i];
               r.mesh.position.z += spd * dt;
-              r.mesh.rotation.z += window.jazzRotDir[2] * 0.012 * dt * 60;
+              r.mesh.rotation.z += window.jazzRotDir[2] * r.spinSpeed * (1.0 + window.jazzRMS * 3.0) * dt * 60;
 
               var t = Math.max(0, Math.min(1, -r.mesh.position.z / (NUM_RINGS * RING_SPACING)));
               r.mat.uniforms.uDeform.value = MAX_DEFORM * t;
