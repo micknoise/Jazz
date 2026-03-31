@@ -21,11 +21,11 @@
     #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: white; font-family: monospace; text-align: center; pointer-events: none; }
     #overlay h1 { font-size: 36px; font-weight: normal; letter-spacing: 0.2em; margin-bottom: 12px; }
     #overlay p  { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: 0.1em; }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.25); font-size: 11px; font-family: monospace; pointer-events: none; }
     #touch-left, #touch-right {
       position: fixed; bottom: 0; width: 42%; height: 130px; z-index: 10;
       display: flex; align-items: center; justify-content: center;
-      font-family: monospace; font-size: 24px;
-      color: rgba(255,255,255,0.2);
+      font-family: monospace; font-size: 24px; color: rgba(255,255,255,0.2);
       border-top: 1px solid rgba(255,255,255,0.1);
       user-select: none; -webkit-user-select: none; touch-action: none;
       transition: background 0.08s, color 0.08s;
@@ -47,32 +47,35 @@
   </div>
   <div id="overlay">
     <h1 id="overlay-title">drive</h1>
-    <p  id="overlay-msg">tap to start  ·  ← → to steer</p>
+    <p  id="overlay-msg">tap to start  ·  ← → to steer  ·  collect the cyan</p>
   </div>
+  <div id="hint">press play for music  ·  ← → or a d to steer</div>
   <div id="touch-left">◀</div>
   <div id="touch-right">▶</div>
 
   <script>
-    // ── Game constants ─────────────────────────────────────────────────────────
+    // ── Constants ──────────────────────────────────────────────────────────────
     var NUM_RINGS    = 14;
+    var FFT_BINS     = 256;
     var RING_SPACING = 190;
     var RING_RADIUS  = 112;
     var RING_TUBE    = 7;
     var SAFE_DIST    = (RING_RADIUS - RING_TUBE) - 18;  // ~87
-    var NUM_HAZARDS  = 8;
-    var HAZARD_R     = 20;
+    var NUM_COLLECT  = 8;
+    var COLLECT_R    = 20;
     var PLAYER_R     = 18;
     var STEER_SPEED  = 170;
     var STEER_BOUNDS = 95;
     var BASE_SPEED   = 290;
     var SPEED_INC    = 38;
     var LEVEL_TIME   = 15;
+    var MAX_DEFORM   = 500;  // farthest ring deform; scales to 0 at camera
 
     // ── Game state ─────────────────────────────────────────────────────────────
     var gameState = 'idle';
-    var score = 0, level = 1, levelTimer = 0;
-    var playerX = 0, steerInput = 0;
+    var score = 0, level = 1, levelTimer = 0, playerX = 0;
     var eventCooldown = 0, peakBaseline = 0;
+    var gameKeys = {};
 
     var hudScore     = document.getElementById('hud-score');
     var hudLevel     = document.getElementById('hud-level');
@@ -83,11 +86,17 @@
     function gameSpeed() { return BASE_SPEED + (level - 1) * SPEED_INC; }
     function maxOffset() { return Math.min((level - 1) * 13, 82); }
 
-    // ── Touch controls ─────────────────────────────────────────────────────────
-    var gameKeys = {};
+    // ── Input (outer scope — calls window.startGame set up by sceneSetup) ──────
+    document.addEventListener('keydown', function (e) {
+      gameKeys[e.code] = true;
+      if ((e.code === 'Space' || e.code === 'Enter') && gameState !== 'playing') {
+        if (window.startGame) window.startGame();
+      }
+    });
+    document.addEventListener('keyup', function (e) { gameKeys[e.code] = false; });
+
     var tl = document.getElementById('touch-left');
     var tr = document.getElementById('touch-right');
-
     function bindSteer(el, code) {
       el.addEventListener('touchstart',  function (e) { e.preventDefault(); gameKeys[code] = true;  el.classList.add('active'); },    { passive: false });
       el.addEventListener('touchend',    function (e) { e.preventDefault(); gameKeys[code] = false; el.classList.remove('active'); }, { passive: false });
@@ -97,14 +106,10 @@
     bindSteer(tr, 'ArrowRight');
 
     document.addEventListener('touchstart', function () {
-      if (gameState !== 'playing') startGame();
+      if (gameState !== 'playing' && window.startGame) window.startGame();
     }, { passive: true });
 
-    document.addEventListener('keydown', function (e) {
-      if ((e.code === 'Space' || e.code === 'Enter') && gameState !== 'playing') startGame();
-    });
-
-    // ── Engine init ────────────────────────────────────────────────────────────
+    // ── Engine ─────────────────────────────────────────────────────────────────
     initJazzEngine({
       title: 'Drive',
       trailOpacity: 0.10,
@@ -112,178 +117,198 @@
         position: new THREE.Vector3(0, 0, 0),
         lookAt:   new THREE.Vector3(0, 0, -100)
       },
-      speed:  0,       // disable engine WASD movement; game controls camera directly
       bounds: 200,
       audio: {
-        sparsity_1:        0.2,
-        sparsity_2:        0.25,
-        tempo:             125,
-        maxTicksPerBeat:   14,
-        fastFreqBase:      400,
-        fastFreqRange:     800,
-        fastModIRange:     20000,
+        sparsity_1:         0.2,
+        sparsity_2:         0.25,
+        tempo:              125,
+        maxTicksPerBeat:    14,
+        fastFreqBase:       400,
+        fastFreqRange:      800,
+        fastModIRange:      20000,
         decayFeedbackValue: 0.995
       },
 
       sceneSetup: function (scene, camera, ss) {
 
-        // ── Ring material ────────────────────────────────────────────────────
-        var ringMat = new THREE.ShaderMaterial({
-          vertexShader:   ss.vertexShader,
-          fragmentShader: ss.fragmentShader,
-          uniforms: ss.makeUniforms({ uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 } }),
-          transparent: true, depthWrite: false
-        });
-
-        // ── Hazard material ──────────────────────────────────────────────────
-        var hazardMat = new THREE.ShaderMaterial({
-          vertexShader:   ss.vertexShader,
-          fragmentShader: ss.fragmentShader,
-          uniforms: ss.makeUniforms({ uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 }, uColor: { value: new THREE.Color(1.0, 0.45, 0.0) } }),
-          transparent: true, depthWrite: false
-        });
-
-        // ── Build rings ──────────────────────────────────────────────────────
+        // ── Per-ring materials, each with its own FFT snapshot texture ─────────
+        // When a ring recycles to the back, it snapshots the current fftArray.
+        // uDeform scales from MAX_DEFORM at the far end to 0 at the camera —
+        // so the wormhole carries a living record of the music as rings approach.
         var rings = [];
         for (var i = 0; i < NUM_RINGS; i++) {
-          var m = new THREE.Mesh(
+          var fftData = new Float32Array(FFT_BINS);
+          var fftTex  = new THREE.DataTexture(fftData, FFT_BINS, 1, THREE.RedFormat, THREE.FloatType);
+          fftTex.magFilter = THREE.NearestFilter;
+          fftTex.minFilter = THREE.NearestFilter;
+
+          var rmat = new THREE.ShaderMaterial({
+            vertexShader:   ss.vertexShader,
+            fragmentShader: ss.fragmentShader,
+            uniforms: ss.makeUniforms({ uFFT: { value: fftTex }, uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 } }),
+            transparent: true, depthWrite: false
+          });
+          var rmesh = new THREE.Mesh(
             addBarycentricCoords(new THREE.TorusGeometry(RING_RADIUS, RING_TUBE, 8, 48)),
-            ringMat
+            rmat
           );
-          m.position.z = -(i + 1) * RING_SPACING;
-          scene.add(m);
-          rings.push(m);
+          rmesh.position.z = -(i + 1) * RING_SPACING;
+          scene.add(rmesh);
+          rings.push({ mesh: rmesh, mat: rmat, fftData: fftData, fftTex: fftTex });
         }
 
-        // ── Build hazards ────────────────────────────────────────────────────
-        var hazards = [];
-        for (var h = 0; h < NUM_HAZARDS; h++) {
-          var hm = new THREE.Mesh(
+        // ── Collectibles (cyan icosahedra, spawned on audio beats) ────────────
+        var collectMat = new THREE.ShaderMaterial({
+          vertexShader:   ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          uniforms: ss.makeUniforms({ uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 }, uColor: { value: new THREE.Color(0.0, 0.85, 1.0) } }),
+          transparent: true, depthWrite: false
+        });
+        var collectibles = [];
+        for (var c = 0; c < NUM_COLLECT; c++) {
+          var cm = new THREE.Mesh(
             addBarycentricCoords(new THREE.IcosahedronGeometry(18, 1)),
-            hazardMat
+            collectMat
           );
-          hm.visible = false;
-          scene.add(hm);
-          hazards.push(hm);
+          cm.visible = false;
+          scene.add(cm);
+          collectibles.push(cm);
         }
 
-        function spawnHazard() {
-          for (var h = 0; h < hazards.length; h++) {
-            if (!hazards[h].visible) {
-              hazards[h].position.set(
-                (Math.random() * 2 - 1) * (STEER_BOUNDS * 0.85),
-                (Math.random() - 0.5) * 50,
+        // ── Helpers ────────────────────────────────────────────────────────────
+        function spawnRing(ring, zPos, fftArray) {
+          var mo = maxOffset();
+          ring.mesh.position.set(mo > 0 ? (Math.random() * 2 - 1) * mo : 0, 0, zPos);
+          ring.mesh.rotation.z = Math.random() * Math.PI * 2;
+          ring.mesh.rotation.x = (Math.random() - 0.5) * 0.12;
+          if (fftArray) {
+            for (var k = 0; k < FFT_BINS; k++) ring.fftData[k] = fftArray[k];
+            ring.fftTex.needsUpdate = true;
+          }
+        }
+
+        function spawnCollectible() {
+          for (var c = 0; c < collectibles.length; c++) {
+            if (!collectibles[c].visible) {
+              collectibles[c].position.set(
+                (Math.random() * 2 - 1) * (STEER_BOUNDS * 0.8),
+                (Math.random() - 0.5) * 20,
                 -2200
               );
-              hazards[h].rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
-              hazards[h].visible = true;
+              collectibles[c].rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+              collectibles[c].visible = true;
               return;
             }
           }
         }
 
-        function spawnRing(ring, zPos) {
-          var mo = maxOffset();
-          ring.position.set(mo > 0 ? (Math.random() * 2 - 1) * mo : 0, 0, zPos);
-          ring.rotation.z = Math.random() * Math.PI * 2;
-          ring.rotation.x = (Math.random() - 0.5) * 0.12;
-        }
-
         function resetAll() {
-          for (var i = 0; i < rings.length;   i++) spawnRing(rings[i], -(i + 1) * RING_SPACING);
-          for (var h = 0; h < hazards.length; h++) hazards[h].visible = false;
-          ringMat.uniforms.uColor.value.setRGB(1, 1, 1);
+          for (var i = 0; i < rings.length; i++)       spawnRing(rings[i], -(i + 1) * RING_SPACING, null);
+          for (var c = 0; c < collectibles.length; c++) collectibles[c].visible = false;
+          rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 1, 1); });
           playerX = 0; score = 0; level = 1; levelTimer = 0;
           camera.position.set(0, 0, 0);
           camera.rotation.set(0, 0, 0);
         }
 
-        function startGame() {
+        // Exposed on window so outer-scope touch/key handlers can call it.
+        // Also programmatically clicks "play" to start audio in the same gesture.
+        window.startGame = function () {
           resetAll();
+          var pb = document.getElementById('playButton');
+          if (pb && pb.textContent === 'play') pb.click();
           gameState = 'playing';
           overlay.style.display = 'none';
-        }
-        window.startGame = startGame;  // expose for touch/key handlers above
+        };
 
         function crash() {
           gameState = 'dead';
-          ringMat.uniforms.uColor.value.setRGB(1, 0.12, 0.12);
+          rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 0.12, 0.12); });
           overlayTitle.textContent = 'crash';
           overlayMsg.textContent   = 'score  ' + Math.floor(score) + '   ·   tap to retry';
           overlay.style.display    = '';
-          setTimeout(function () { ringMat.uniforms.uColor.value.setRGB(1, 1, 1); }, 900);
+          setTimeout(function () {
+            rings.forEach(function (r) { r.mat.uniforms.uColor.value.setRGB(1, 1, 1); });
+          }, 900);
         }
 
-        // ── Per-frame update (called by engine.js render loop) ───────────────
+        // ── Per-frame update (engine.js calls this each frame) ─────────────────
         return {
           update: function (fftArray, elapsed, dt) {
 
-            // Keep camera locked to game position; disable engine's free-fly
+            // Disable engine free-fly: lock z/y, game drives x
             camera.position.z = 0;
             camera.position.y = 0;
-
-            // Update shader time on both materials
-            ringMat.uniforms.uTime.value   = elapsed;
-            hazardMat.uniforms.uTime.value = elapsed;
+            collectMat.uniforms.uTime.value = elapsed;
 
             if (gameState !== 'playing') return;
 
-            // Scoring / levelling
             levelTimer += dt;
             score      += dt * gameSpeed() * 0.1;
             if (levelTimer >= LEVEL_TIME) { level++; levelTimer = 0; }
 
-            // Steering (game keys + engine keys both work)
-            steerInput = 0;
-            if (gameKeys['ArrowLeft']  || window._jazzKeys && window._jazzKeys['KeyA']) steerInput = -1;
-            if (gameKeys['ArrowRight'] || window._jazzKeys && window._jazzKeys['KeyD']) steerInput =  1;
-            playerX = Math.max(-STEER_BOUNDS, Math.min(STEER_BOUNDS, playerX + steerInput * STEER_SPEED * dt));
+            // Steer — gameKeys tracks both keyboard and touch
+            var steer = 0;
+            if (gameKeys['ArrowLeft']  || gameKeys['KeyA']) steer = -1;
+            if (gameKeys['ArrowRight'] || gameKeys['KeyD']) steer =  1;
+            playerX = Math.max(-STEER_BOUNDS, Math.min(STEER_BOUNDS, playerX + steer * STEER_SPEED * dt));
             camera.position.x += (playerX - camera.position.x) * 9 * dt;
-            camera.rotation.z += (-steerInput * 0.045 - camera.rotation.z) * 12 * dt;
+            camera.rotation.z += (-steer * 0.045 - camera.rotation.z) * 12 * dt;
             camera.rotation.x  = 0;
             camera.rotation.y  = 0;
 
-            // FFT beat detection → spawn hazard
+            // FFT beat detection → spawn collectible
             var peak = 0;
             for (var fi = 0; fi < fftArray.length; fi++) if (fftArray[fi] > peak) peak = fftArray[fi];
             peakBaseline  = peakBaseline * 0.99 + peak * 0.01;
             eventCooldown = Math.max(0, eventCooldown - dt);
             if (eventCooldown <= 0 && peak > peakBaseline * 1.5 && peak > 0.02) {
-              spawnHazard();
+              spawnCollectible();
               eventCooldown = 0.4;
             }
 
             var spd = gameSpeed();
 
-            // Rings
+            // Rings — per-ring deform fades from MAX_DEFORM (far) to 0 (near)
             for (var i = 0; i < rings.length; i++) {
-              rings[i].position.z += spd * dt;
-              rings[i].rotation.z += window.jazzRotDir[2] * 0.012 * dt * 60;
-              if (rings[i].position.z > 120) {
+              var r = rings[i];
+              r.mesh.position.z += spd * dt;
+              r.mesh.rotation.z += window.jazzRotDir[2] * 0.012 * dt * 60;
+
+              var t = Math.max(0, Math.min(1, -r.mesh.position.z / (NUM_RINGS * RING_SPACING)));
+              r.mat.uniforms.uDeform.value = MAX_DEFORM * t;
+              r.mat.uniforms.uTime.value   = elapsed;
+
+              // Recycle: snapshot current FFT onto the ring as it respawns at the back
+              if (r.mesh.position.z > 120) {
                 var minZ = Infinity;
-                for (var j = 0; j < rings.length; j++) minZ = Math.min(minZ, rings[j].position.z);
-                spawnRing(rings[i], minZ - RING_SPACING);
+                for (var j = 0; j < rings.length; j++) minZ = Math.min(minZ, rings[j].mesh.position.z);
+                spawnRing(r, minZ - RING_SPACING, fftArray);
               }
-              var rz = rings[i].position.z;
+
+              var rz = r.mesh.position.z;
               if (rz > -90 && rz < 90) {
-                var dx = camera.position.x - rings[i].position.x;
-                var dy = camera.position.y - rings[i].position.y;
+                var dx = camera.position.x - r.mesh.position.x;
+                var dy = camera.position.y - r.mesh.position.y;
                 if (Math.sqrt(dx * dx + dy * dy) > SAFE_DIST) { crash(); return; }
               }
             }
 
-            // Hazards
-            for (var hi = 0; hi < hazards.length; hi++) {
-              if (!hazards[hi].visible) continue;
-              hazards[hi].position.z += spd * dt;
-              hazards[hi].rotation.x += 0.02 * dt * 60;
-              hazards[hi].rotation.y += 0.015 * dt * 60;
-              if (hazards[hi].position.z > 150) { hazards[hi].visible = false; continue; }
-              var hz = hazards[hi].position.z;
-              if (hz > -60 && hz < 60) {
-                var hdx = camera.position.x - hazards[hi].position.x;
-                var hdy = camera.position.y - hazards[hi].position.y;
-                if (Math.sqrt(hdx * hdx + hdy * hdy) < HAZARD_R + PLAYER_R) { crash(); return; }
+            // Collectibles — collect on proximity, +500 points
+            for (var ci = 0; ci < collectibles.length; ci++) {
+              if (!collectibles[ci].visible) continue;
+              collectibles[ci].position.z += spd * dt;
+              collectibles[ci].rotation.x += 0.02 * dt * 60;
+              collectibles[ci].rotation.y += 0.015 * dt * 60;
+              if (collectibles[ci].position.z > 150) { collectibles[ci].visible = false; continue; }
+              var cz = collectibles[ci].position.z;
+              if (cz > -60 && cz < 60) {
+                var cdx = camera.position.x - collectibles[ci].position.x;
+                var cdy = camera.position.y - collectibles[ci].position.y;
+                if (Math.sqrt(cdx * cdx + cdy * cdy) < COLLECT_R + PLAYER_R) {
+                  collectibles[ci].visible = false;
+                  score += 500;
+                }
               }
             }
 
@@ -294,8 +319,10 @@
           reset: function () { resetAll(); gameState = 'idle'; overlay.style.display = ''; },
 
           gui: function (folder) {
-            folder.add(ringMat.uniforms.uDeform, 'value', 0, 800, 1).name('Ring deform');
-            folder.add(ringMat.uniforms.uLineWidth, 'value', 0.5, 6, 0.1).name('Line width');
+            var cfg = { maxDeform: MAX_DEFORM };
+            folder.add(cfg, 'maxDeform', 0, 800, 1).name('Max FFT deform').onChange(function (v) { MAX_DEFORM = v; });
+            folder.add(rings[0].mat.uniforms.uLineWidth, 'value', 0.5, 6, 0.1).name('Line width')
+              .onChange(function (v) { rings.forEach(function (r) { r.mat.uniforms.uLineWidth.value = v; }); });
           }
         };
       }
