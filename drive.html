@@ -162,18 +162,15 @@
 
       sceneSetup: function (scene, camera, ss) {
 
-        // ── Rings — each carries its own frozen FFT snapshot ───────────────────
+        // ── Rings — share the engine's live FFT texture for real-time deformation.
+        // Per-ring colour (uColor) is still snapshotted at spawn so the tunnel
+        // builds up a palette of music history even as the shapes animate live.
         var rings = [];
         for (var i = 0; i < NUM_RINGS; i++) {
-          var fftData = new Float32Array(FFT_BINS);
-          var fftTex  = new THREE.DataTexture(fftData, FFT_BINS, 1, THREE.RedFormat, THREE.FloatType);
-          fftTex.magFilter = THREE.NearestFilter;
-          fftTex.minFilter = THREE.NearestFilter;
-
           var rmat = new THREE.ShaderMaterial({
             vertexShader:   ss.vertexShader,
             fragmentShader: ss.fragmentShader,
-            uniforms: ss.makeUniforms({ uFFT: { value: fftTex }, uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 } }),
+            uniforms: ss.makeUniforms({ uFFTUV: { value: 0.0 }, uDeform: { value: 0.0 } }),
             transparent: true, depthWrite: false
           });
           var rmesh = new THREE.Mesh(
@@ -183,7 +180,7 @@
           rmesh.position.z = -(i + 1) * RING_SPACING;
           scene.add(rmesh);
           rings.push({
-            mesh: rmesh, mat: rmat, fftData: fftData, fftTex: fftTex,
+            mesh: rmesh, mat: rmat,
             color: new THREE.Color(1, 1, 1),   // HSL colour from FFT snapshot
             tint:  new THREE.Color(1, 1, 1),   // working tint (may be crash-red)
             spinSpeed: 0.003 + Math.random() * 0.036
@@ -216,15 +213,14 @@
           ring.mesh.rotation.x = (Math.random() - 0.5) * 0.12;
 
           if (fftArray) {
+            // Snapshot colour from current FFT — spectral centroid → hue,
+            // RMS → luminance (capped at 0.60 so rings stay saturated, not white)
             var sum = 0, sqSum = 0, wSum = 0;
             for (var k = 0; k < FFT_BINS; k++) {
-              ring.fftData[k] = fftArray[k];
               sum  += fftArray[k];
               sqSum += fftArray[k] * fftArray[k];
               wSum  += k * fftArray[k];
             }
-            ring.fftTex.needsUpdate = true;
-            // Spectral centroid → hue; RMS → luminance (capped at 0.60 to avoid white)
             var hue = sum > 0.001 ? (wSum / sum) / FFT_BINS : Math.random();
             var rms = Math.sqrt(sqSum / FFT_BINS);
             var lum = 0.35 + 0.25 * Math.min(rms * 4.0, 1.0);
