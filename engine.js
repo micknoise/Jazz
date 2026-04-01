@@ -448,14 +448,8 @@
 
       updateScene(fftArray, elapsed, dt);
 
-      // Use fadeMat.opacity (live, slider-controlled) not the initial trailOpacity.
-      // opacity=0 → full clear (no trail); opacity>0 → depth-only clear + fade quad.
-      if (fadeMat.opacity > 0) {
-        renderer.clearDepth();
-        renderer.render(fadeScene, fadeCamera);
-      } else {
-        renderer.clear();
-      }
+      renderer.clearDepth();
+      renderer.render(fadeScene, fadeCamera);
       renderer.render(scene, camera);
 
       requestAnimationFrame(draw);

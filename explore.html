@@ -169,7 +169,7 @@
       }
 
       // Branch corridors — perpendicular dead-ends; ~35% chance, not on early segs
-      if (i >= 2 && !special && Math.random() > 0.62) {
+      if (i >= 2 && !special && Math.random() > 0.30) {
         var bSide = Math.random() > 0.5 ? 'left' : 'right';
         var hasDoorOnSide = false;
         for (var dd = 0; dd < seg.doors.length; dd++) {
@@ -354,7 +354,8 @@
       // Shared depth-mask material: writes Z, invisible.
       // Used behind every wall/door so transparent wireframes properly occlude.
       var maskMat = new THREE.MeshBasicMaterial({
-        colorWrite: false, depthWrite: true, side: THREE.DoubleSide
+        colorWrite: false, depthWrite: true, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4
       });
 
       var wallMats = [];   // wireframe materials updated for audio wobble
@@ -755,7 +756,7 @@
             var bg    = branchGroups[bi];
             var b     = bg.branch;
             var bSign = b.side === 'left' ? -1 : 1;
-            if (camera.position.x * bSign > CORR_HALF + 1 &&
+            if (camera.position.x * bSign > CORR_HALF - PLAYER_R &&
                 Math.abs(pz - b.zPos) < b.width / 2) {
               activeBranch = bg; break;
             }
@@ -783,10 +784,13 @@
               if (!prg.room.open) continue;
               var prm    = prg.room;
               var pxSign = prm.side === 'left' ? -1 : 1;
-              var pCX    = pxSign * (CORR_HALF + prm.w / 2);
-              if (Math.abs(pz - prm.zCenter) < prm.d / 2 - PLAYER_R) {
-                if (prm.side === 'left') xLo = Math.min(xLo, pCX - prm.w / 2 + PLAYER_R);
-                else                     xHi = Math.max(xHi, pCX + prm.w / 2 - PLAYER_R);
+              // Allow room access if player Z is within room depth (generous buffer),
+              // OR if player is already inside room X (prevents snap-out at Z edge).
+              var inRoomZ = Math.abs(pz - prm.zCenter) < prm.d / 2 + PLAYER_R * 2;
+              var inRoomX = camera.position.x * pxSign > CORR_HALF - PLAYER_R;
+              if (inRoomZ || inRoomX) {
+                if (prm.side === 'left') xLo = Math.min(xLo, -(CORR_HALF + prm.w - PLAYER_R));
+                else                     xHi = Math.max(xHi,   CORR_HALF + prm.w - PLAYER_R);
               }
             }
             // Allow the player to step into branch openings
