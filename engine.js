@@ -294,7 +294,7 @@
     // recover without refreshing manually.
     var audioInitTimer = setTimeout(audioInitFailed, 20000);
 
-    initAudioEngine(document.location.origin + '/libs')
+    initAudioEngine(new URL('./libs', document.location.href).href)
       .then(function (dspEngine) {
         maxi = dspEngine;
         sendRealtimeParams();
