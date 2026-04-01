@@ -30,6 +30,34 @@
                color: white; font-family: monospace; text-align: center; pointer-events: none; }
     #overlay h1 { font-size: 36px; font-weight: normal; letter-spacing: 0.2em; margin-bottom: 12px; }
     #overlay p  { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: 0.1em; line-height: 1.9; }
+
+    /* ── Touch zones ─────────────────────────────────────────────────────────── */
+    /* Left 42% = movement joystick zone, right 58% = look + tap-to-open zone   */
+    #touch-move-zone {
+      position: fixed; left: 0; bottom: 0; width: 42%; height: 46%;
+      z-index: 8; touch-action: none; pointer-events: none;
+    }
+    #touch-look-zone {
+      position: fixed; right: 0; bottom: 0; width: 58%; height: 100%;
+      z-index: 8; touch-action: none; pointer-events: none;
+    }
+
+    /* Virtual joystick rings — appear at first touch, follow thumb */
+    #joy-outer, #joy-inner {
+      position: fixed; border-radius: 50%; pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+    }
+    #joy-outer {
+      width: 88px; height: 88px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.03);
+    }
+    #joy-inner {
+      width: 38px; height: 38px;
+      border: 1px solid rgba(255,255,255,0.35);
+      background: rgba(255,255,255,0.06);
+    }
   </style>
 </head>
 <body>
@@ -43,91 +71,78 @@
     <div id="hud-seg">corridor  1</div>
   </div>
   <div id="crosshair">+</div>
-  <div id="door-hint">[ click to open ]</div>
+  <div id="door-hint">[ tap to open ]</div>
   <div id="overlay">
     <h1>explore</h1>
-    <p>click to lock pointer<br>wasd / arrows to move · mouse to look<br>aim at a door and click to open</p>
+    <p id="overlay-msg">tap to start · left thumb to move<br>right thumb to look · tap a door to open it</p>
   </div>
+  <div id="touch-move-zone"></div>
+  <div id="touch-look-zone"></div>
+  <div id="joy-outer"></div>
+  <div id="joy-inner"></div>
 
   <script>
   // ── World constants ──────────────────────────────────────────────────────────
-  var CORR_HALF  = 48;     // half-width of main corridor
-  var CORR_H     = 115;    // corridor height
-  var EYE_Y      = 72;     // camera eye height
-  var SEG_LEN    = 340;    // normal segment length (z depth)
-  var SEG_SPEC   = 620;    // special segment length
-  var NUM_SEGS   = 22;     // total segments to generate
-  var DOOR_W     = 44;     // door opening width
-  var DOOR_H     = 86;     // door opening height
-  var MAX_DEFORM = 340;    // max FFT deform magnitude for room objects
-  var FFT_BINS   = 256;
+  var CORR_HALF  = 48;
+  var CORR_H     = 115;
+  var EYE_Y      = 72;
+  var SEG_LEN    = 340;
+  var SEG_SPEC   = 620;
+  var NUM_SEGS   = 22;
+  var DOOR_W     = 44;
+  var DOOR_H     = 86;
+  var MAX_DEFORM = 340;
+  var MOVE_SPEED = 115;
+  var JOY_RADIUS = 44;   // px — max displacement of virtual joystick knob
+  var LOOK_SENS  = 0.0032;
 
   // ── Floor plan pre-generation ────────────────────────────────────────────────
   function generateFloorPlan() {
     var plan = { segments: [], rooms: [] };
-    var z = 0;
-    var roomIdx = 0;
-    var rng = Math.random; // could seed here for reproducibility
+    var z = 0, roomIdx = 0;
 
     for (var i = 0; i < NUM_SEGS; i++) {
       var special = (i > 0 && i % 5 === 0);
       var len = special ? SEG_SPEC : SEG_LEN;
+      var seg = { id: i, zStart: -z, zEnd: -(z + len), length: len, special: special, doors: [] };
 
-      var seg = {
-        id: i,
-        zStart: -z,
-        zEnd: -(z + len),
-        length: len,
-        special: special,
-        doors: []
-      };
-
-      // Place 1–2 doors per segment (always 1 for special)
-      var numDoors = special ? 1 : (rng() > 0.25 ? 1 : 0);
-      if (!special && rng() > 0.55) numDoors = 2;
+      var numDoors = special ? 1 : (Math.random() > 0.25 ? 1 : 0);
+      if (!special && Math.random() > 0.55) numDoors = 2;
 
       var usedSides = {};
       for (var d = 0; d < numDoors; d++) {
-        var side = rng() > 0.5 ? 'left' : 'right';
+        var side = Math.random() > 0.5 ? 'left' : 'right';
         if (usedSides[side]) side = (side === 'left') ? 'right' : 'left';
         if (usedSides[side]) continue;
         usedSides[side] = true;
 
-        // Position door along segment (avoid very ends)
-        var tPos  = 0.25 + rng() * 0.5;
+        var tPos  = 0.25 + Math.random() * 0.5;
         var doorZ = -(z + len * tPos);
 
-        var rW = special ? (320 + rng() * 100) : (160 + rng() * 90);
-        var rH = special ? (190 + rng() * 50)  : (110 + rng() * 35);
-        var rD = special ? (380 + rng() * 100) : (190 + rng() * 90);
+        var rW = special ? (320 + Math.random() * 100) : (160 + Math.random() * 90);
+        var rH = special ? (190 + Math.random() * 50)  : (110 + Math.random() * 35);
+        var rD = special ? (380 + Math.random() * 100) : (190 + Math.random() * 90);
 
-        var numObjs = special ? 1 : Math.floor(2 + rng() * 4);
+        var numObjs = special ? 1 : Math.floor(2 + Math.random() * 4);
         var objTypes = ['torus','icosahedron','octahedron','sphere','torusKnot'];
         var objects = [];
         for (var o = 0; o < numObjs; o++) {
           objects.push({
-            type:   objTypes[Math.floor(rng() * objTypes.length)],
-            x:      (rng() - 0.5) * rW * 0.55,
-            y:      rH * (0.3 + rng() * 0.35),
-            z:      (rng() - 0.5) * rD * 0.55,
-            scale:  special ? (2.2 + rng() * 1.0) : (0.7 + rng() * 0.9),
-            hue:    rng(),
-            spinX:  (rng() - 0.5) * 0.55,
-            spinY:  (rng() - 0.5) * 0.55,
-            spinZ:  (rng() - 0.5) * 0.25
+            type:  objTypes[Math.floor(Math.random() * objTypes.length)],
+            x:     (Math.random() - 0.5) * rW * 0.55,
+            y:     rH * (0.3 + Math.random() * 0.35),
+            z:     (Math.random() - 0.5) * rD * 0.55,
+            scale: special ? (2.2 + Math.random() * 1.0) : (0.7 + Math.random() * 0.9),
+            hue:   Math.random(),
+            spinX: (Math.random() - 0.5) * 0.55,
+            spinY: (Math.random() - 0.5) * 0.55,
+            spinZ: (Math.random() - 0.5) * 0.25
           });
         }
 
-        var room = {
-          id:      'r' + roomIdx++,
-          side:    side,
-          zCenter: doorZ,
-          w: rW, h: rH, d: rD,
-          special: special,
-          objects: objects,
-          hue:     rng(),
-          open:    false
-        };
+        var room = { id: 'r' + roomIdx++, side: side, zCenter: doorZ,
+                     w: rW, h: rH, d: rD, special: special,
+                     objects: objects, hue: Math.random(), open: false };
         plan.rooms.push(room);
         seg.doors.push({ side: side, zPos: doorZ, roomId: room.id });
       }
@@ -135,17 +150,131 @@
       plan.segments.push(seg);
       z += len;
     }
-
     return plan;
   }
 
-  // ── HUD refs ─────────────────────────────────────────────────────────────────
-  var hudRooms  = document.getElementById('hud-rooms');
-  var hudSeg    = document.getElementById('hud-seg');
-  var doorHint  = document.getElementById('door-hint');
-  var overlay   = document.getElementById('overlay');
+  // ── Touch controls ───────────────────────────────────────────────────────────
+  var joyOuter = document.getElementById('joy-outer');
+  var joyInner = document.getElementById('joy-inner');
 
-  // Pre-generate & log the floor plan as JSON so it's inspectable in DevTools
+  // Movement joystick state
+  var joyActive = false, joyId = null;
+  var joyOriginX = 0, joyOriginY = 0;
+  var joyDX = 0, joyDY = 0;  // normalised –1..1
+
+  // Look drag state
+  var lookActive = false, lookId = null;
+  var lookLastX = 0, lookLastY = 0;
+  var lookAccYaw = 0, lookAccPitch = 0;   // accumulated this frame, reset after applied
+  var myPitch = 0, myYaw = 0;             // our own camera angles for touch look
+  var touchLookUsed = false;              // true once finger has dragged (not just tapped)
+
+  // Tap-to-open state (right zone tap with little movement)
+  var lookTapStartX = 0, lookTapStartY = 0;
+  var lookMoved = false;
+  var openDoorFn = null;  // set inside sceneSetup
+
+  function showJoy(ox, oy, dx, dy) {
+    joyOuter.style.left = ox + 'px';
+    joyOuter.style.top  = oy + 'px';
+    joyOuter.style.display = 'block';
+    var cx = ox + dx * JOY_RADIUS;
+    var cy = oy + dy * JOY_RADIUS;
+    joyInner.style.left = cx + 'px';
+    joyInner.style.top  = cy + 'px';
+    joyInner.style.display = 'block';
+  }
+  function hideJoy() {
+    joyOuter.style.display = 'none';
+    joyInner.style.display = 'none';
+  }
+
+  function isMoveZone(clientX) {
+    return clientX < window.innerWidth * 0.42;
+  }
+
+  document.addEventListener('touchstart', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (isMoveZone(t.clientX)) {
+        if (!joyActive) {
+          joyActive = true; joyId = t.identifier;
+          joyOriginX = t.clientX; joyOriginY = t.clientY;
+          joyDX = 0; joyDY = 0;
+          showJoy(joyOriginX, joyOriginY, 0, 0);
+        }
+      } else {
+        if (!lookActive) {
+          lookActive = true; lookId = t.identifier;
+          lookLastX = t.clientX; lookLastY = t.clientY;
+          lookTapStartX = t.clientX; lookTapStartY = t.clientY;
+          lookMoved = false;
+          touchLookUsed = true;
+        }
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (joyActive && t.identifier === joyId) {
+        var dx = t.clientX - joyOriginX;
+        var dy = t.clientY - joyOriginY;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 0) {
+          var clamped = Math.min(dist, JOY_RADIUS);
+          joyDX = dx / dist * (clamped / JOY_RADIUS);
+          joyDY = dy / dist * (clamped / JOY_RADIUS);
+          showJoy(joyOriginX, joyOriginY, joyDX, joyDY);
+        }
+      }
+      if (lookActive && t.identifier === lookId) {
+        var mdx = t.clientX - lookLastX;
+        var mdy = t.clientY - lookLastY;
+        lookAccYaw   += mdx;
+        lookAccPitch += mdy;
+        lookLastX = t.clientX;
+        lookLastY = t.clientY;
+        if (Math.abs(t.clientX - lookTapStartX) > 12 ||
+            Math.abs(t.clientY - lookTapStartY) > 12) {
+          lookMoved = true;
+        }
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (joyActive && t.identifier === joyId) {
+        joyActive = false; joyId = null;
+        joyDX = 0; joyDY = 0;
+        hideJoy();
+      }
+      if (lookActive && t.identifier === lookId) {
+        lookActive = false; lookId = null;
+        // Short tap with little movement = try to open door
+        if (!lookMoved && openDoorFn) openDoorFn();
+      }
+    }
+    document.getElementById('overlay').style.display = 'none';
+  }, { passive: true });
+
+  document.addEventListener('touchcancel', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier === joyId)  { joyActive = false; joyId = null; joyDX = 0; joyDY = 0; hideJoy(); }
+      if (t.identifier === lookId) { lookActive = false; lookId = null; }
+    }
+  }, { passive: true });
+
+  // ── HUD ──────────────────────────────────────────────────────────────────────
+  var hudRooms = document.getElementById('hud-rooms');
+  var hudSeg   = document.getElementById('hud-seg');
+  var doorHint = document.getElementById('door-hint');
+  var overlay  = document.getElementById('overlay');
+
   var plan = generateFloorPlan();
   console.log('[Jazz Explore] floor plan:', JSON.stringify(plan, null, 2));
 
@@ -158,7 +287,7 @@
     trailOpacity: 0.10,
     camera:       { position: new THREE.Vector3(0, EYE_Y, 40) },
     bounds:       9000,
-    speed:        115,
+    speed:        MOVE_SPEED,
     audio: {
       sparsity_1:         0,
       sparsity_2:         0.3,
@@ -174,12 +303,12 @@
 
       scene.fog = new THREE.FogExp2(0x000000, 0.0016);
 
-      var doorMeshes  = [];   // checked by raycaster
-      var roomObjects = [];   // { mesh, mat, spinX, spinY, spinZ }
-      var wallMats    = [];   // all wall/floor/ceiling materials (updated for audio wobble)
-      var doorDataMap = [];   // parallel to doorMeshes: { room }
+      var doorMeshes  = [];
+      var roomObjects = [];
+      var wallMats    = [];
+      var doorDataMap = [];
 
-      // ── Material helpers ────────────────────────────────────────────────────
+      // ── Material helper ─────────────────────────────────────────────────────
       function wireMat(color, lw) {
         var m = new THREE.ShaderMaterial({
           uniforms: ss.makeUniforms({
@@ -190,9 +319,7 @@
           }),
           vertexShader:   ss.vertexShader,
           fragmentShader: ss.fragmentShader,
-          transparent: true,
-          depthWrite:  false,
-          side:        THREE.DoubleSide
+          transparent: true, depthWrite: false, side: THREE.DoubleSide
         });
         wallMats.push(m);
         return m;
@@ -208,7 +335,7 @@
         return m;
       }
 
-      // ── Corridor walls (floor + ceiling + side walls, per segment) ──────────
+      // ── Corridor walls ──────────────────────────────────────────────────────
       plan.segments.forEach(function (seg) {
         var zMid = (seg.zStart + seg.zEnd) / 2;
         var len  = seg.length;
@@ -216,26 +343,20 @@
           ? new THREE.Color().setHSL(0.62, 0.7, 0.12)
           : new THREE.Color().setHSL(0.57, 0.5, 0.07);
 
-        // Floor and ceiling
         addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, len, 4, 10), wireMat(col),
           0, 0, zMid, -Math.PI / 2, 0, 0);
         addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, len, 4, 10), wireMat(col),
           0, CORR_H, zMid, Math.PI / 2, 0, 0);
-
-        // Left + right walls (dim, purely structural)
         addPlane(new THREE.PlaneGeometry(len, CORR_H, 10, 4), wireMat(col),
           -CORR_HALF, CORR_H / 2, zMid, 0, Math.PI / 2, 0);
         addPlane(new THREE.PlaneGeometry(len, CORR_H, 10, 4), wireMat(col),
           CORR_HALF, CORR_H / 2, zMid, 0, -Math.PI / 2, 0);
       });
 
-      // End cap
       var lastSeg = plan.segments[plan.segments.length - 1];
       addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, CORR_H, 5, 4),
         wireMat(new THREE.Color().setHSL(0.57, 0.6, 0.18)),
         0, CORR_H / 2, lastSeg.zEnd, 0, 0, 0);
-
-      // Start cap
       addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, CORR_H, 5, 4),
         wireMat(new THREE.Color().setHSL(0.57, 0.6, 0.18)),
         0, CORR_H / 2, 60, 0, Math.PI, 0);
@@ -244,82 +365,54 @@
       var roomMap = {};
       plan.rooms.forEach(function (room) {
         roomMap[room.id] = room;
-
         var xSign = room.side === 'left' ? -1 : 1;
-        var rx    = xSign * (CORR_HALF + room.w / 2);
-        var ry    = room.h / 2;
-        var rz    = room.zCenter;
-        var h     = room.hue;
+        var rx = xSign * (CORR_HALF + room.w / 2);
+        var ry = room.h / 2;
+        var rz = room.zCenter;
+        var wallCol = new THREE.Color().setHSL(room.hue, 0.65, 0.08);
 
-        var wallCol = new THREE.Color().setHSL(h, 0.65, 0.08);
-
-        // Back wall (far from corridor)
         addPlane(new THREE.PlaneGeometry(room.w, room.h, 7, 4), wireMat(wallCol),
-          rx, ry, rz - xSign * room.d / 2,
-          0, xSign > 0 ? 0 : Math.PI, 0);
-
-        // Far side wall
+          rx, ry, rz - xSign * room.d / 2, 0, xSign > 0 ? 0 : Math.PI, 0);
         addPlane(new THREE.PlaneGeometry(room.d, room.h, 9, 4), wireMat(wallCol),
-          rx + xSign * room.w / 2, ry, rz,
-          0, xSign * Math.PI / 2, 0);
-
-        // Floor
+          rx + xSign * room.w / 2, ry, rz, 0, xSign * Math.PI / 2, 0);
         addPlane(new THREE.PlaneGeometry(room.w, room.d, 5, 7), wireMat(wallCol),
           rx, 0, rz, -Math.PI / 2, 0, 0);
-
-        // Ceiling
         addPlane(new THREE.PlaneGeometry(room.w, room.d, 5, 7), wireMat(wallCol),
           rx, room.h, rz, Math.PI / 2, 0, 0);
 
-        // Entrance wall strip above the door (between DOOR_H and room.h)
         var stripH = room.h - DOOR_H;
         if (stripH > 2) {
           addPlane(new THREE.PlaneGeometry(DOOR_W, stripH, 3, 2), wireMat(wallCol),
-            rx - xSign * room.w / 2, DOOR_H + stripH / 2, rz,
-            0, -xSign * Math.PI / 2, 0);
+            rx - xSign * room.w / 2, DOOR_H + stripH / 2, rz, 0, -xSign * Math.PI / 2, 0);
         }
 
-        // ── Room objects ─────────────────────────────────────────────────────
+        // Room objects
         room.objects.forEach(function (obj) {
-          var sz  = 22 * obj.scale;
+          var sz = 22 * obj.scale;
           var geo;
           switch (obj.type) {
-            case 'torus':
-              geo = new THREE.TorusGeometry(sz, sz * 0.32, 8, 36); break;
-            case 'icosahedron':
-              geo = new THREE.IcosahedronGeometry(sz, 2); break;
-            case 'octahedron':
-              geo = new THREE.OctahedronGeometry(sz, 2); break;
-            case 'sphere':
-              geo = new THREE.SphereGeometry(sz, 12, 8); break;
-            case 'torusKnot':
-              geo = new THREE.TorusKnotGeometry(sz * 0.65, sz * 0.18, 90, 8); break;
-            default:
-              geo = new THREE.IcosahedronGeometry(sz, 2);
+            case 'torus':       geo = new THREE.TorusGeometry(sz, sz * 0.32, 8, 36); break;
+            case 'icosahedron': geo = new THREE.IcosahedronGeometry(sz, 2); break;
+            case 'octahedron':  geo = new THREE.OctahedronGeometry(sz, 2); break;
+            case 'sphere':      geo = new THREE.SphereGeometry(sz, 12, 8); break;
+            case 'torusKnot':   geo = new THREE.TorusKnotGeometry(sz * 0.65, sz * 0.18, 90, 8); break;
+            default:            geo = new THREE.IcosahedronGeometry(sz, 2);
           }
-
-          var objCol = new THREE.Color().setHSL(obj.hue, 1.0, 0.48);
           var mat = new THREE.ShaderMaterial({
             uniforms: ss.makeUniforms({
-              uColor:     { value: objCol },
+              uColor:     { value: new THREE.Color().setHSL(obj.hue, 1.0, 0.48) },
               uDeform:    { value: 0 },
               uFFTUV:     { value: 0.0 },
               uLineWidth: { value: 2.2 }
             }),
-            vertexShader:   ss.vertexShader,
-            fragmentShader: ss.fragmentShader,
-            transparent: true,
-            depthWrite:  false
+            vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
+            transparent: true, depthWrite: false
           });
-
           var mesh = new THREE.Mesh(addBarycentricCoords(geo), mat);
           mesh.position.set(rx + obj.x, obj.y, rz + obj.z);
           scene.add(mesh);
-
-          roomObjects.push({
-            mesh: mesh, mat: mat,
-            spinX: obj.spinX, spinY: obj.spinY, spinZ: obj.spinZ
-          });
+          roomObjects.push({ mesh: mesh, mat: mat,
+                             spinX: obj.spinX, spinY: obj.spinY, spinZ: obj.spinZ });
         });
       });
 
@@ -328,10 +421,7 @@
         seg.doors.forEach(function (door) {
           var room  = roomMap[door.roomId];
           var xSign = door.side === 'left' ? -1 : 1;
-
-          var lum = room.special ? 0.38 : 0.24;
-          var doorCol = new THREE.Color().setHSL(room.hue, 1.0, lum);
-
+          var doorCol = new THREE.Color().setHSL(room.hue, 1.0, room.special ? 0.38 : 0.24);
           var doorMat = new THREE.ShaderMaterial({
             uniforms: ss.makeUniforms({
               uColor:     { value: doorCol },
@@ -339,70 +429,58 @@
               uFFTUV:     { value: 1.0 },
               uLineWidth: { value: 2.8 }
             }),
-            vertexShader:   ss.vertexShader,
-            fragmentShader: ss.fragmentShader,
-            transparent: true,
-            depthWrite:  false,
-            side:        THREE.DoubleSide
+            vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
+            transparent: true, depthWrite: false, side: THREE.DoubleSide
           });
           wallMats.push(doorMat);
 
           var mesh = new THREE.Mesh(
-            addBarycentricCoords(new THREE.PlaneGeometry(DOOR_W, DOOR_H, 3, 6)),
-            doorMat
-          );
-          // Position in the corridor wall, slightly offset inward so it doesn't z-fight
-          mesh.position.set(
-            xSign * (CORR_HALF - 0.4),
-            DOOR_H / 2,
-            door.zPos
-          );
+            addBarycentricCoords(new THREE.PlaneGeometry(DOOR_W, DOOR_H, 3, 6)), doorMat);
+          mesh.position.set(xSign * (CORR_HALF - 0.4), DOOR_H / 2, door.zPos);
           mesh.rotation.y = xSign * Math.PI / 2;
           scene.add(mesh);
-
           doorMeshes.push(mesh);
           doorDataMap.push(room);
         });
       });
 
       // ── Raycaster ───────────────────────────────────────────────────────────
-      var raycaster     = new THREE.Raycaster();
-      var screenCenter  = new THREE.Vector2(0, 0);
-      var lookingAtDoor = false;
-      var hintTick      = 0;
+      var raycaster    = new THREE.Raycaster();
+      var screenCenter = new THREE.Vector2(0, 0);
+      var hintTick     = 0;
 
       function tryOpenDoor() {
         raycaster.setFromCamera(screenCenter, camera);
         var visible = doorMeshes.filter(function (m) { return m.visible; });
         var hits    = raycaster.intersectObjects(visible);
         if (hits.length > 0 && hits[0].distance < 220) {
-          var idx  = doorMeshes.indexOf(hits[0].object);
-          var room = doorDataMap[idx];
+          var idx = doorMeshes.indexOf(hits[0].object);
           hits[0].object.visible = false;
-          room.open = true;
+          doorDataMap[idx].open = true;
           openedRooms++;
           hudRooms.textContent = 'rooms  ' + openedRooms;
         }
       }
 
-      // Click while pointer is locked = interaction
+      // Expose to touch handler
+      openDoorFn = tryOpenDoor;
+
+      // Desktop: click while pointer locked
       document.addEventListener('click', function () {
         overlay.style.display = 'none';
         if (document.pointerLockElement) tryOpenDoor();
       });
 
-      // Mobile tap
-      document.addEventListener('touchend', function () {
-        overlay.style.display = 'none';
-        tryOpenDoor();
-      }, { passive: true });
+      // ── Temp vectors for touch movement ─────────────────────────────────────
+      var touchMoveDir = new THREE.Vector3();
+      var euler        = new THREE.Euler(0, 0, 0, 'YXZ');
 
       // ── Update ──────────────────────────────────────────────────────────────
       return {
         update: function (fftArray, elapsed, dt) {
           var rms = window.jazzRMS || 0;
 
-          // Animate room objects with live FFT
+          // Room objects: live FFT deformation + spin
           for (var i = 0; i < roomObjects.length; i++) {
             var o = roomObjects[i];
             o.mat.uniforms.uDeform.value = rms * MAX_DEFORM;
@@ -412,10 +490,30 @@
             o.mesh.rotation.z += o.spinZ * dt;
           }
 
-          // Subtle corridor audio wobble
+          // Corridor wall audio wobble
           for (var j = 0; j < wallMats.length; j++) {
             wallMats[j].uniforms.uDeform.value = rms * 20;
             wallMats[j].uniforms.uTime.value   = elapsed;
+          }
+
+          // ── Touch look (only when no pointer lock) ──────────────────────────
+          if (!document.pointerLockElement && touchLookUsed) {
+            myYaw   -= lookAccYaw   * LOOK_SENS;
+            myPitch -= lookAccPitch * LOOK_SENS;
+            myPitch  = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, myPitch));
+            euler.set(myPitch, myYaw, 0);
+            camera.quaternion.setFromEuler(euler);
+          }
+          lookAccYaw = 0;
+          lookAccPitch = 0;
+
+          // ── Touch joystick movement ─────────────────────────────────────────
+          if (joyActive && (joyDX !== 0 || joyDY !== 0)) {
+            // joyDX = strafe, joyDY = forward(neg)/back(pos)
+            touchMoveDir.set(joyDX, 0, joyDY).normalize();
+            touchMoveDir.applyQuaternion(camera.quaternion);
+            touchMoveDir.y = 0; // stay at eye level
+            camera.position.addScaledVector(touchMoveDir, MOVE_SPEED * dt);
           }
 
           // HUD: current segment
@@ -428,16 +526,19 @@
             }
           }
 
-          // Door hint (check every 8 frames)
+          // Door hint — check every 8 frames, works on both desktop and mobile
           hintTick++;
-          if (hintTick % 8 === 0 && document.pointerLockElement) {
-            raycaster.setFromCamera(screenCenter, camera);
-            var vis  = doorMeshes.filter(function (m) { return m.visible; });
-            var hits2 = raycaster.intersectObjects(vis);
-            lookingAtDoor = hits2.length > 0 && hits2[0].distance < 220;
-            doorHint.style.display = lookingAtDoor ? 'block' : 'none';
-          } else if (!document.pointerLockElement) {
-            doorHint.style.display = 'none';
+          if (hintTick % 8 === 0) {
+            var active = document.pointerLockElement || touchLookUsed;
+            if (active) {
+              raycaster.setFromCamera(screenCenter, camera);
+              var vis  = doorMeshes.filter(function (m) { return m.visible; });
+              var hits = raycaster.intersectObjects(vis);
+              doorHint.style.display =
+                (hits.length > 0 && hits[0].distance < 220) ? 'block' : 'none';
+            } else {
+              doorHint.style.display = 'none';
+            }
           }
         },
 
@@ -447,6 +548,8 @@
           plan.rooms.forEach(function (r) { r.open = false; });
           hudRooms.textContent = 'rooms  0';
           doorHint.style.display = 'none';
+          myPitch = 0; myYaw = 0;
+          touchLookUsed = false;
         }
       };
     }
