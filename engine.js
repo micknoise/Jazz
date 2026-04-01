@@ -274,6 +274,26 @@
     var analyser, floatFreqData, linArray, sampleRate;
     var playing = false, engineReady = false;
 
+    // Grab the play button immediately and show loading state while the audio
+    // engine initialises. If init fails or times out, show a reload prompt.
+    var playBtn = document.getElementById('playButton');
+    playBtn.textContent = 'loading…';
+    playBtn.disabled = true;
+
+    function audioInitFailed() {
+      playBtn.textContent = 'reload ↺';
+      playBtn.disabled = false;
+      playBtn.addEventListener('click', function onReload() {
+        playBtn.removeEventListener('click', onReload);
+        window.location.reload();
+      });
+    }
+
+    // 20-second hard timeout — if init hangs (e.g. first load before the
+    // COOP service-worker is active), show a reload button so the user can
+    // recover without refreshing manually.
+    var audioInitTimer = setTimeout(audioInitFailed, 20000);
+
     initAudioEngine(document.location.origin + '/libs')
       .then(function (dspEngine) {
         maxi = dspEngine;
@@ -304,9 +324,15 @@
             sendRealtimeParams();
           };
         }
+        clearTimeout(audioInitTimer);
         engineReady = true;
-        playBtn.textContent = 'play'; // overwrite 'loading…' if shown
+        playBtn.textContent = 'play';
         playBtn.disabled = false;
+      })
+      .catch(function (err) {
+        console.error('Audio engine failed to load:', err);
+        clearTimeout(audioInitTimer);
+        audioInitFailed();
       });
 
     // ── Play button ──────────────────────────────────────────────────────────
@@ -314,16 +340,9 @@
     // within the browser's user-gesture window — the only time AudioContext
     // .resume() is guaranteed to persist (async callbacks / setTimeout calls
     // are outside the gesture window and the browser auto-suspends them).
-    var playBtn = document.getElementById('playButton');
     playBtn.addEventListener('click', function () {
       if (!playing) {
-        if (!engineReady) {
-          // Engine still loading — show feedback and let the .then() above
-          // re-enable the button when ready.
-          playBtn.textContent = 'loading…';
-          playBtn.disabled = true;
-          return;
-        }
+        if (!engineReady) return; // button should be disabled — guard only
         maxi.play(); // synchronous resume — within user gesture ✓
         playing = true;
         playBtn.textContent = 'stop';
