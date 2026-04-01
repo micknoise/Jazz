@@ -7,11 +7,11 @@
   <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
   <script src="./engine.js"></script>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Jazz — Explore</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; }
+    body { background: #000; overflow: hidden; touch-action: none; }
     #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
     a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace;
              border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
@@ -50,6 +50,7 @@
     <a class="back" href="index.html">← gallery</a>
     <button id="playButton">play</button>
     <button id="resetButton">reset</button>
+    <button id="fsButton">⛶ fullscreen</button>
   </div>
   <div id="hud">
     <div id="hud-rooms">rooms  0</div>
@@ -171,6 +172,7 @@
   function isMoveZone(x) { return x < window.innerWidth * 0.42; }
 
   document.addEventListener('touchstart', function (e) {
+    e.preventDefault(); // block browser zoom / scroll
     for (var i = 0; i < e.changedTouches.length; i++) {
       var t = e.changedTouches[i];
       if (isMoveZone(t.clientX)) {
@@ -189,9 +191,10 @@
         }
       }
     }
-  }, { passive: true });
+  }, { passive: false });
 
   document.addEventListener('touchmove', function (e) {
+    e.preventDefault(); // block pinch-zoom during drag
     for (var i = 0; i < e.changedTouches.length; i++) {
       var t = e.changedTouches[i];
       if (joyActive && t.identifier === joyId) {
@@ -253,6 +256,28 @@
   console.log('[Jazz Explore] floor plan:', JSON.stringify(plan, null, 2));
 
   var openedRooms = 0;
+
+  // ── Fullscreen ───────────────────────────────────────────────────────────────
+  var fsBtn = document.getElementById('fsButton');
+
+  function isFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function updateFsBtn() {
+    fsBtn.textContent = isFullscreen() ? '⛶ exit fs' : '⛶ fullscreen';
+  }
+  fsBtn.addEventListener('click', function () {
+    if (!isFullscreen()) {
+      var el = document.documentElement;
+      if      (el.requestFullscreen)       el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } else {
+      if      (document.exitFullscreen)       document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    }
+  });
+  document.addEventListener('fullscreenchange',       updateFsBtn);
+  document.addEventListener('webkitfullscreenchange', updateFsBtn);
 
   // ── Engine ───────────────────────────────────────────────────────────────────
   initJazzEngine({
