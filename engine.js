@@ -290,7 +290,7 @@
           // Insert a gain node so variations can control master volume.
           var gainNode = ctx.createGain();
           gainNode.gain.value = 1.0;
-          try { maxi.audioWorkletNode.disconnect(ctx.destination); } catch(e) {}
+          try { maxi.audioWorkletNode.disconnect(); } catch(e) {}
           maxi.audioWorkletNode.connect(gainNode);
           gainNode.connect(ctx.destination);
           maxi.audioWorkletNode.connect(analyser);

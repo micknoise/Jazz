@@ -645,31 +645,31 @@
           }
 
           // ── Proximity-driven volume ───────────────────────────────────────────
-          var VOL_NEAR = 100;  // full volume within this XZ distance of room centre
-          var VOL_FAR  = 520;  // silence beyond this distance
-          var nearestRg   = null;
-          var nearestDist = Infinity;
+          // Volume = 10% in corridor near open door, 100% deep inside room.
+          // Z-fade drops to 0 beyond VOL_Z_MARGIN units past the room's depth.
+          var VOL_Z_MARGIN = 190;
+          var targetVol = 0;
+          var bestRoom   = null;
           for (var rv = 0; rv < roomGroups.length; rv++) {
             var vrg = roomGroups[rv];
             if (!vrg.room.open) continue;
-            var rvdx = camX - vrg.centerX;
-            var rvdz = camZ - vrg.room.zCenter;
-            var rvd  = Math.sqrt(rvdx * rvdx + rvdz * rvdz);
-            if (rvd < nearestDist) { nearestDist = rvd; nearestRg = vrg; }
+            var prm = vrg.room;
+            var zDist = Math.abs(camZ - prm.zCenter);
+            var zFade = 1 - Math.max(0, Math.min(1,
+              (zDist - prm.d * 0.5) / VOL_Z_MARGIN));
+            if (zFade <= 0) continue;
+            // xDepth: 0 while player is in corridor, →1 as they go deeper into room
+            var pxSign = prm.side === 'left' ? -1 : 1;
+            var xDepth = Math.max(0, Math.min(1,
+              (camX * pxSign - CORR_HALF) / (prm.w * 0.45)));
+            var vol = (0.10 + xDepth * 0.90) * zFade;
+            if (vol > targetVol) { targetVol = vol; bestRoom = vrg; }
           }
 
-          var targetVol = 0;
-          if (nearestRg && nearestDist < VOL_FAR) {
-            var t = 1 - Math.max(0, Math.min(1, (nearestDist - VOL_NEAR) / (VOL_FAR - VOL_NEAR)));
-            targetVol = 0.10 + t * 0.90;
-
-            // Switch audio params when entering a different room's zone
-            if (nearestRg !== currentAudioRoom) {
-              currentAudioRoom = nearestRg;
-              if (window.jazzSetAudioParams) window.jazzSetAudioParams(nearestRg.room.audioParams);
-            }
-          } else if (!nearestRg) {
-            currentAudioRoom = null;
+          if (bestRoom !== currentAudioRoom) {
+            currentAudioRoom = bestRoom;
+            if (bestRoom && window.jazzSetAudioParams)
+              window.jazzSetAudioParams(bestRoom.room.audioParams);
           }
 
           // Smooth volume: faster ramp-up, slower fade-out
