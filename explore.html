@@ -400,7 +400,7 @@
 
         var xSign   = room.side === 'left' ? -1 : 1;
         var centerX = xSign * (CORR_HALF + room.w / 2);
-        var wallCol = new THREE.Color().setHSL(room.hue, 0.2, 0.08);
+        var wallCol = new THREE.Color(0xffffff);
         var mat     = wireMat(wallCol);
 
         // Four room walls (entrance side left open — covered by door mesh)
@@ -465,8 +465,8 @@
         var zMid = (seg.zStart + seg.zEnd) / 2;
         var len  = seg.length;
         var col  = seg.special
-          ? new THREE.Color().setHSL(0.62, 0.22, 0.12)
-          : new THREE.Color().setHSL(0.57, 0.18, 0.07);
+          ? new THREE.Color(0xffffff)
+          : new THREE.Color(0xffffff);
         var mat = wireMat(col);
 
         // Floor and ceiling (no doors — full planes)
@@ -490,7 +490,7 @@
       // End + start caps (always visible — close to origin)
       var lastSeg    = plan.segments[plan.segments.length - 1];
       var lastSegZEnd = lastSeg.zEnd;
-      var capMat  = wireMat(new THREE.Color().setHSL(0.57, 0.2, 0.18));
+      var capMat  = wireMat(new THREE.Color(0xffffff));
       var capGroup = new THREE.Group(); scene.add(capGroup);
       addSurface(tiledPlane(CORR_HALF * 2, CORR_H), capMat, capGroup,
         0, CORR_H / 2, lastSeg.zEnd, 0, 0, 0);
@@ -504,7 +504,7 @@
           var room  = rg.room;
           var xSign = door.side === 'left' ? -1 : 1;
 
-          var doorCol = new THREE.Color().setHSL(room.hue, 0.4, room.special ? 0.32 : 0.20);
+          var doorCol = new THREE.Color(0xffffff);
           var doorMat = new THREE.ShaderMaterial({
             uniforms: ss.makeUniforms({
               uColor: { value: doorCol }, uDeform: { value: 0 },
