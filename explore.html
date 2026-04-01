@@ -140,9 +140,22 @@
           });
         }
 
+        var roomAudio = {
+          sparsity_1:         0.05 + Math.random() * 0.35,
+          sparsity_2:         0.15 + Math.random() * 0.40,
+          maxTicksPerBeat:    3    + Math.floor(Math.random() * 10),
+          slowFreq2:          20   + Math.random() * 500,
+          slowModI:           Math.random() * 10,
+          fastFreqBase:       60   + Math.random() * 600,
+          fastFreqRange:      100  + Math.random() * 700,
+          decayFeedbackValue: 0.993 + Math.random() * 0.006,
+          fastFreq2Range:     60   + Math.random() * 900,
+          fastModIRange:      1000 + Math.random() * 16000
+        };
         var room = { id: 'r' + roomIdx++, side: side, zCenter: doorZ,
                      w: rW, h: rH, d: rD, special: special,
-                     objects: objects, hue: Math.random(), open: false };
+                     objects: objects, hue: Math.random(), open: false,
+                     audioParams: roomAudio };
         plan.rooms.push(room);
         seg.doors.push({ side: side, zPos: doorZ, roomId: room.id });
       }
@@ -262,6 +275,9 @@
   var deformSlider = document.getElementById('deformSlider');
   function getDeform() { return parseFloat(deformSlider.value); }
 
+  var currentVol       = 0;   // smoothed master volume (0–1)
+  var currentAudioRoom = null; // roomGroup whose audio params are active
+
   var plan = generateFloorPlan();
   console.log('[Jazz Explore] floor plan:', JSON.stringify(plan, null, 2));
 
@@ -317,7 +333,7 @@
           uniforms: ss.makeUniforms({
             uColor:     { value: new THREE.Color(color) },
             uDeform:    { value: 0 }, uFFTUV: { value: 1.0 },
-            uLineWidth: { value: lw || 1.2 }
+            uLineWidth: { value: lw || 2.4 }
           }),
           vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
           transparent: true, depthWrite: false, side: THREE.DoubleSide
@@ -613,7 +629,7 @@
             }
           }
 
-          // ── Room objects: live FFT deform + spin ─────────────────────────────
+          // ── Room objects: FFT deform + spin ──────────────────────────────────
           for (var i = 0; i < allRoomObjs.length; i++) {
             var o = allRoomObjs[i];
             o.mat.uniforms.uDeform.value = getDeform();
@@ -623,11 +639,43 @@
             o.mesh.rotation.z += o.spinZ * dt;
           }
 
-          // ── Corridor wall audio wobble ────────────────────────────────────────
+          // ── Corridor / room walls: no audio deformation ───────────────────────
           for (var j = 0; j < wallMats.length; j++) {
-            wallMats[j].uniforms.uDeform.value = getDeform() * 0.45;
-            wallMats[j].uniforms.uTime.value   = elapsed;
+            wallMats[j].uniforms.uDeform.value = 0;
           }
+
+          // ── Proximity-driven volume ───────────────────────────────────────────
+          var VOL_NEAR = 100;  // full volume within this XZ distance of room centre
+          var VOL_FAR  = 520;  // silence beyond this distance
+          var nearestRg   = null;
+          var nearestDist = Infinity;
+          for (var rv = 0; rv < roomGroups.length; rv++) {
+            var vrg = roomGroups[rv];
+            if (!vrg.room.open) continue;
+            var rvdx = camX - vrg.centerX;
+            var rvdz = camZ - vrg.room.zCenter;
+            var rvd  = Math.sqrt(rvdx * rvdx + rvdz * rvdz);
+            if (rvd < nearestDist) { nearestDist = rvd; nearestRg = vrg; }
+          }
+
+          var targetVol = 0;
+          if (nearestRg && nearestDist < VOL_FAR) {
+            var t = 1 - Math.max(0, Math.min(1, (nearestDist - VOL_NEAR) / (VOL_FAR - VOL_NEAR)));
+            targetVol = 0.10 + t * 0.90;
+
+            // Switch audio params when entering a different room's zone
+            if (nearestRg !== currentAudioRoom) {
+              currentAudioRoom = nearestRg;
+              if (window.jazzSetAudioParams) window.jazzSetAudioParams(nearestRg.room.audioParams);
+            }
+          } else if (!nearestRg) {
+            currentAudioRoom = null;
+          }
+
+          // Smooth volume: faster ramp-up, slower fade-out
+          var smooth = targetVol > currentVol ? 0.06 : 0.03;
+          currentVol = currentVol * (1 - smooth) + targetVol * smooth;
+          if (window.jazzSetVolume) window.jazzSetVolume(currentVol);
 
           // ── Collision — keep player inside corridor / open rooms ─────────────
           // Compute allowed X range at this Z based on open rooms
@@ -706,6 +754,8 @@
           hudRooms.textContent = 'rooms  0';
           doorHint.style.display = 'none';
           myPitch = 0; myYaw = 0; touchEverUsed = false;
+          currentVol = 0; currentAudioRoom = null;
+          if (window.jazzSetVolume) window.jazzSetVolume(0);
         }
       };
     }

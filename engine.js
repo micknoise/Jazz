@@ -287,7 +287,20 @@
           analyser.fftSize = FFT_BINS * 2;
           floatFreqData = new Float32Array(analyser.frequencyBinCount);
           linArray = new Float32Array(FFT_BINS);
+          // Insert a gain node so variations can control master volume.
+          var gainNode = ctx.createGain();
+          gainNode.gain.value = 1.0;
+          try { maxi.audioWorkletNode.disconnect(ctx.destination); } catch(e) {}
+          maxi.audioWorkletNode.connect(gainNode);
+          gainNode.connect(ctx.destination);
           maxi.audioWorkletNode.connect(analyser);
+          window.jazzSetVolume = function (v) {
+            gainNode.gain.value = Math.max(0, Math.min(1, v));
+          };
+          window.jazzSetAudioParams = function (params) {
+            Object.assign(audioParams, params);
+            sendRealtimeParams();
+          };
         }
         engineReady = true;
         playBtn.textContent = 'play'; // overwrite 'loading…' if shown
