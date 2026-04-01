@@ -213,6 +213,12 @@
     }
   }, { passive: true });
 
+  // Auto-start audio on first user gesture (same pattern as drive.html)
+  function startAudioIfNeeded() {
+    var pb = document.getElementById('playButton');
+    if (pb && pb.textContent === 'play') pb.click();
+  }
+
   document.addEventListener('touchend', function (e) {
     for (var i = 0; i < e.changedTouches.length; i++) {
       var t = e.changedTouches[i];
@@ -225,6 +231,7 @@
       }
     }
     document.getElementById('overlay').style.display = 'none';
+    startAudioIfNeeded();
   }, { passive: true });
 
   document.addEventListener('touchcancel', function (e) {
@@ -481,6 +488,7 @@
 
       document.addEventListener('click', function () {
         overlay.style.display = 'none';
+        startAudioIfNeeded();
         if (document.pointerLockElement) tryOpenDoor();
       });
 
