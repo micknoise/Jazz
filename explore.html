@@ -11,7 +11,8 @@
   <title>Jazz — Explore</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; touch-action: none; }
+    body { background: #000; overflow: hidden; }
+    canvas { touch-action: none; }
     #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
     a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace;
              border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
@@ -116,7 +117,7 @@
         var rH = special ? (210 + Math.random() * 70)  : (145 + Math.random() * 50);
         var rD = special ? (520 + Math.random() * 160) : (290 + Math.random() * 130);
 
-        var numObjs = special ? 1 : Math.floor(2 + Math.random() * 4);
+        var numObjs = special ? 1 : 1 + Math.floor(Math.random() * 2);
         var objTypes = ['torus','icosahedron','octahedron','sphere','torusKnot'];
         var objects = [];
         for (var o = 0; o < numObjs; o++) {
@@ -172,7 +173,7 @@
   function isMoveZone(x) { return x < window.innerWidth * 0.42; }
 
   document.addEventListener('touchstart', function (e) {
-    e.preventDefault(); // block browser zoom / scroll
+    if (e.target.tagName === 'CANVAS') e.preventDefault(); // block browser zoom / scroll on canvas only
     for (var i = 0; i < e.changedTouches.length; i++) {
       var t = e.changedTouches[i];
       if (isMoveZone(t.clientX)) {
@@ -606,7 +607,7 @@
           // ── Room objects: live FFT deform + spin ─────────────────────────────
           for (var i = 0; i < allRoomObjs.length; i++) {
             var o = allRoomObjs[i];
-            o.mat.uniforms.uDeform.value = rms * MAX_DEFORM;
+            o.mat.uniforms.uDeform.value = MAX_DEFORM;
             o.mat.uniforms.uTime.value   = elapsed;
             o.mesh.rotation.x += o.spinX * dt;
             o.mesh.rotation.y += o.spinY * dt;
@@ -615,7 +616,7 @@
 
           // ── Corridor wall audio wobble ────────────────────────────────────────
           for (var j = 0; j < wallMats.length; j++) {
-            wallMats[j].uniforms.uDeform.value = rms * 65;
+            wallMats[j].uniforms.uDeform.value = 45;
             wallMats[j].uniforms.uTime.value   = elapsed;
           }
 
