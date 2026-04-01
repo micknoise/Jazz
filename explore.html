@@ -76,7 +76,8 @@
   var NUM_SEGS   = 22;
   var DOOR_W     = 44;
   var DOOR_H     = 86;
-  var MAX_DEFORM = 340;
+  var MAX_DEFORM = 600;
+  var PLAYER_R   = 12;   // collision radius
   var MOVE_SPEED = 115;
   var JOY_RADIUS = 44;
   var LOOK_SENS  = 0.006;
@@ -315,6 +316,44 @@
           Math.max(1, Math.round(h / TILE)));
       }
 
+      // Build one side wall for a corridor segment, leaving DOOR_W × DOOR_H gaps
+      // at each supplied door Z position (world space).
+      // doorZPositions: array of world-Z values for doors on this side.
+      function buildSideWall(group, mat, side, zStart, zEnd, doorZPositions) {
+        var wallX  = side === 'left' ? -CORR_HALF : CORR_HALF;
+        var wallRY = side === 'left' ?  Math.PI / 2 : -Math.PI / 2;
+        // Sort descending (zStart > zEnd, i.e. near-to-far)
+        var dzs = doorZPositions.slice().sort(function (a, b) { return b - a; });
+        var cursor = zStart;
+
+        for (var d = 0; d < dzs.length; d++) {
+          var dz      = dzs[d];
+          var dNear   = dz + DOOR_W / 2;
+          var dFar    = dz - DOOR_W / 2;
+          var aboveH  = CORR_H - DOOR_H;
+
+          // Full-height piece from cursor to near edge of door
+          var w1 = cursor - dNear;
+          if (w1 > 0.5) {
+            addSurface(tiledPlane(w1, CORR_H), mat, group,
+              wallX, CORR_H / 2, (cursor + dNear) / 2, 0, wallRY, 0);
+          }
+          // Above-door strip (DOOR_H → CORR_H) across the door opening
+          if (aboveH > 0.5) {
+            addSurface(tiledPlane(DOOR_W, aboveH), mat, group,
+              wallX, DOOR_H + aboveH / 2, dz, 0, wallRY, 0);
+          }
+          cursor = dFar;
+        }
+
+        // Remaining piece after all doors to far end
+        var wLast = cursor - zEnd;
+        if (wLast > 0.5) {
+          addSurface(tiledPlane(wLast, CORR_H), mat, group,
+            wallX, CORR_H / 2, (cursor + zEnd) / 2, 0, wallRY, 0);
+        }
+      }
+
       // ── Build room groups ────────────────────────────────────────────────────
       var roomGroups  = [];
       var roomById    = {};
@@ -395,20 +434,27 @@
           : new THREE.Color().setHSL(0.57, 0.18, 0.07);
         var mat = wireMat(col);
 
+        // Floor and ceiling (no doors — full planes)
         addSurface(tiledPlane(CORR_HALF * 2, len), mat, group,
           0, 0, zMid, -Math.PI / 2, 0, 0);
         addSurface(tiledPlane(CORR_HALF * 2, len), mat, group,
           0, CORR_H, zMid, Math.PI / 2, 0, 0);
-        addSurface(tiledPlane(len, CORR_H), mat, group,
-          -CORR_HALF, CORR_H / 2, zMid, 0, Math.PI / 2, 0);
-        addSurface(tiledPlane(len, CORR_H), mat, group,
-          CORR_HALF, CORR_H / 2, zMid, 0, -Math.PI / 2, 0);
+
+        // Side walls — split around any door openings
+        var leftDoors = [], rightDoors = [];
+        seg.doors.forEach(function (d) {
+          if (d.side === 'left') leftDoors.push(d.zPos);
+          else                   rightDoors.push(d.zPos);
+        });
+        buildSideWall(group, mat, 'left',  seg.zStart, seg.zEnd, leftDoors);
+        buildSideWall(group, mat, 'right', seg.zStart, seg.zEnd, rightDoors);
 
         corrGroups.push({ zMid: zMid, group: group });
       });
 
       // End + start caps (always visible — close to origin)
-      var lastSeg = plan.segments[plan.segments.length - 1];
+      var lastSeg    = plan.segments[plan.segments.length - 1];
+      var lastSegZEnd = lastSeg.zEnd;
       var capMat  = wireMat(new THREE.Color().setHSL(0.57, 0.2, 0.18));
       var capGroup = new THREE.Group(); scene.add(capGroup);
       addSurface(tiledPlane(CORR_HALF * 2, CORR_H), capMat, capGroup,
@@ -544,9 +590,30 @@
 
           // ── Corridor wall audio wobble ────────────────────────────────────────
           for (var j = 0; j < wallMats.length; j++) {
-            wallMats[j].uniforms.uDeform.value = rms * 20;
+            wallMats[j].uniforms.uDeform.value = rms * 65;
             wallMats[j].uniforms.uTime.value   = elapsed;
           }
+
+          // ── Collision — keep player inside corridor / open rooms ─────────────
+          // Compute allowed X range at this Z based on open rooms
+          var pz   = camera.position.z;
+          var xLo  = -(CORR_HALF - PLAYER_R);
+          var xHi  =  (CORR_HALF - PLAYER_R);
+          for (var ri = 0; ri < roomGroups.length; ri++) {
+            var prg  = roomGroups[ri];
+            if (!prg.room.open) continue;
+            var prm  = prg.room;
+            var pxSign = prm.side === 'left' ? -1 : 1;
+            var pCX    = pxSign * (CORR_HALF + prm.w / 2);
+            if (Math.abs(pz - prm.zCenter) < prm.d / 2 - PLAYER_R) {
+              if (prm.side === 'left') xLo = Math.min(xLo, pCX - prm.w / 2 + PLAYER_R);
+              else                     xHi = Math.max(xHi, pCX + prm.w / 2 - PLAYER_R);
+            }
+          }
+          camera.position.x = Math.max(xLo, Math.min(xHi, camera.position.x));
+          camera.position.y = EYE_Y;
+          // Z: stay within corridor length
+          camera.position.z = Math.max(lastSegZEnd + PLAYER_R, Math.min(40, camera.position.z));
 
           // ── Touch look ───────────────────────────────────────────────────────
           if (!document.pointerLockElement && touchEverUsed) {
