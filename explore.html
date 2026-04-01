@@ -300,6 +300,14 @@
         return meshes[1]; // wireframe mesh
       }
 
+      // Returns a PlaneGeometry subdivided into near-square tiles of ~TILE units.
+      var TILE = 90;
+      function tiledPlane(w, h) {
+        return new THREE.PlaneGeometry(w, h,
+          Math.max(1, Math.round(w / TILE)),
+          Math.max(1, Math.round(h / TILE)));
+      }
+
       // ── Build room groups ────────────────────────────────────────────────────
       var roomGroups  = [];
       var roomById    = {};
@@ -311,24 +319,24 @@
 
         var xSign   = room.side === 'left' ? -1 : 1;
         var centerX = xSign * (CORR_HALF + room.w / 2);
-        var wallCol = new THREE.Color().setHSL(room.hue, 0.65, 0.08);
+        var wallCol = new THREE.Color().setHSL(room.hue, 0.2, 0.08);
         var mat     = wireMat(wallCol);
 
         // Four room walls (entrance side left open — covered by door mesh)
-        addSurface(new THREE.PlaneGeometry(room.w, room.h, 7, 4), mat, group,
+        addSurface(tiledPlane(room.w, room.h), mat, group,
           centerX, room.h / 2, room.zCenter - xSign * room.d / 2,
           0, xSign > 0 ? 0 : Math.PI, 0);
-        addSurface(new THREE.PlaneGeometry(room.d, room.h, 9, 4), mat, group,
+        addSurface(tiledPlane(room.d, room.h), mat, group,
           centerX + xSign * room.w / 2, room.h / 2, room.zCenter,
           0, xSign * Math.PI / 2, 0);
-        addSurface(new THREE.PlaneGeometry(room.w, room.d, 5, 7), mat, group,
+        addSurface(tiledPlane(room.w, room.d), mat, group,
           centerX, 0, room.zCenter, -Math.PI / 2, 0, 0);
-        addSurface(new THREE.PlaneGeometry(room.w, room.d, 5, 7), mat, group,
+        addSurface(tiledPlane(room.w, room.d), mat, group,
           centerX, room.h, room.zCenter, Math.PI / 2, 0, 0);
 
         var stripH = room.h - DOOR_H;
         if (stripH > 2) {
-          addSurface(new THREE.PlaneGeometry(DOOR_W, stripH, 3, 2), mat, group,
+          addSurface(tiledPlane(DOOR_W, stripH), mat, group,
             centerX - xSign * room.w / 2, DOOR_H + stripH / 2, room.zCenter,
             0, -xSign * Math.PI / 2, 0);
         }
@@ -348,7 +356,7 @@
           }
           var objMat = new THREE.ShaderMaterial({
             uniforms: ss.makeUniforms({
-              uColor: { value: new THREE.Color().setHSL(obj.hue, 1.0, 0.48) },
+              uColor: { value: new THREE.Color().setHSL(obj.hue, 0.72, 0.44) },
               uDeform: { value: 0 }, uFFTUV: { value: 0.0 }, uLineWidth: { value: 2.2 }
             }),
             vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
@@ -376,17 +384,17 @@
         var zMid = (seg.zStart + seg.zEnd) / 2;
         var len  = seg.length;
         var col  = seg.special
-          ? new THREE.Color().setHSL(0.62, 0.7, 0.12)
-          : new THREE.Color().setHSL(0.57, 0.5, 0.07);
+          ? new THREE.Color().setHSL(0.62, 0.22, 0.12)
+          : new THREE.Color().setHSL(0.57, 0.18, 0.07);
         var mat = wireMat(col);
 
-        addSurface(new THREE.PlaneGeometry(CORR_HALF * 2, len, 4, 10), mat, group,
+        addSurface(tiledPlane(CORR_HALF * 2, len), mat, group,
           0, 0, zMid, -Math.PI / 2, 0, 0);
-        addSurface(new THREE.PlaneGeometry(CORR_HALF * 2, len, 4, 10), mat, group,
+        addSurface(tiledPlane(CORR_HALF * 2, len), mat, group,
           0, CORR_H, zMid, Math.PI / 2, 0, 0);
-        addSurface(new THREE.PlaneGeometry(len, CORR_H, 10, 4), mat, group,
+        addSurface(tiledPlane(len, CORR_H), mat, group,
           -CORR_HALF, CORR_H / 2, zMid, 0, Math.PI / 2, 0);
-        addSurface(new THREE.PlaneGeometry(len, CORR_H, 10, 4), mat, group,
+        addSurface(tiledPlane(len, CORR_H), mat, group,
           CORR_HALF, CORR_H / 2, zMid, 0, -Math.PI / 2, 0);
 
         corrGroups.push({ zMid: zMid, group: group });
@@ -394,11 +402,11 @@
 
       // End + start caps (always visible — close to origin)
       var lastSeg = plan.segments[plan.segments.length - 1];
-      var capMat  = wireMat(new THREE.Color().setHSL(0.57, 0.6, 0.18));
+      var capMat  = wireMat(new THREE.Color().setHSL(0.57, 0.2, 0.18));
       var capGroup = new THREE.Group(); scene.add(capGroup);
-      addSurface(new THREE.PlaneGeometry(CORR_HALF * 2, CORR_H, 5, 4), capMat, capGroup,
+      addSurface(tiledPlane(CORR_HALF * 2, CORR_H), capMat, capGroup,
         0, CORR_H / 2, lastSeg.zEnd, 0, 0, 0);
-      addSurface(new THREE.PlaneGeometry(CORR_HALF * 2, CORR_H, 5, 4), capMat, capGroup,
+      addSurface(tiledPlane(CORR_HALF * 2, CORR_H), capMat, capGroup,
         0, CORR_H / 2, 60, 0, Math.PI, 0);
 
       // ── Build doors (added to their room's group) ────────────────────────────
@@ -408,7 +416,7 @@
           var room  = rg.room;
           var xSign = door.side === 'left' ? -1 : 1;
 
-          var doorCol = new THREE.Color().setHSL(room.hue, 1.0, room.special ? 0.38 : 0.24);
+          var doorCol = new THREE.Color().setHSL(room.hue, 0.4, room.special ? 0.32 : 0.20);
           var doorMat = new THREE.ShaderMaterial({
             uniforms: ss.makeUniforms({
               uColor: { value: doorCol }, uDeform: { value: 0 },
@@ -419,7 +427,7 @@
           });
           wallMats.push(doorMat);
 
-          var doorGeo = new THREE.PlaneGeometry(DOOR_W, DOOR_H, 3, 6);
+          var doorGeo = tiledPlane(DOOR_W, DOOR_H);
 
           // Pivot sits at the bottom-centre of the doorway in the wall.
           // Sliding its Y up animates the door rising into the ceiling.
