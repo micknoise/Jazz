@@ -86,6 +86,7 @@
   var DOOR_H     = 86;
   var MAX_DEFORM = 50;
   var PLAYER_R   = 12;   // collision radius
+  var BRANCH_W   = CORR_HALF * 2;  // branch corridor width = 96
   var MOVE_SPEED = 115;
   var JOY_RADIUS = 44;
   var LOOK_SENS  = 0.006;
@@ -97,8 +98,8 @@
 
   // ── Floor plan ───────────────────────────────────────────────────────────────
   function generateFloorPlan() {
-    var plan = { segments: [], rooms: [] };
-    var z = 0, roomIdx = 0;
+    var plan = { segments: [], rooms: [], branches: [] };
+    var z = 0, roomIdx = 0, branchIdx = 0;
 
     for (var i = 0; i < NUM_SEGS; i++) {
       var special = (i > 0 && i % 5 === 0);
@@ -118,10 +119,17 @@
         var tPos  = 0.25 + Math.random() * 0.5;
         var doorZ = -(z + len * tPos);
 
-        // Rooms are ~55% bigger than the original version
-        var rW = special ? (460 + Math.random() * 160) : (250 + Math.random() * 130);
-        var rH = special ? (210 + Math.random() * 70)  : (145 + Math.random() * 50);
-        var rD = special ? (520 + Math.random() * 160) : (290 + Math.random() * 130);
+        // Shape presets: chamber (square), hall (long), gallery (wide), atrium (tall)
+        var shapeNames = special ? ['atrium'] : ['chamber','hall','gallery','atrium'];
+        var shape = shapeNames[Math.floor(Math.random() * shapeNames.length)];
+
+        var rW = special ? (800 + Math.random() * 400) : (400 + Math.random() * 220);
+        var rH = special ? (300 + Math.random() * 120) : (170 + Math.random() * 100);
+        var rD = special ? (900 + Math.random() * 500) : (480 + Math.random() * 260);
+
+        if (shape === 'hall')    { rD *= 1.9; rW *= 0.6; }
+        if (shape === 'gallery') { rW *= 1.9; rD *= 0.6; }
+        if (shape === 'atrium')  { rH *= 2.0; rW *= 1.3; rD *= 1.3; }
 
         var numObjs = special ? 1 : 1 + Math.floor(Math.random() * 2);
         var objTypes = ['torus','icosahedron','octahedron','sphere','torusKnot'];
@@ -130,7 +138,7 @@
           objects.push({
             type:  objTypes[Math.floor(Math.random() * objTypes.length)],
             x:     (Math.random() - 0.5) * rW * 0.55,
-            y:     rH * (0.3 + Math.random() * 0.35),
+            y:     rH * (0.2 + Math.random() * 0.35),
             z:     (Math.random() - 0.5) * rD * 0.55,
             scale: special ? (2.4 + Math.random() * 1.2) : (0.8 + Math.random() * 1.0),
             hue:   Math.random(),
@@ -153,11 +161,35 @@
           fastModIRange:      1000 + Math.random() * 16000
         };
         var room = { id: 'r' + roomIdx++, side: side, zCenter: doorZ,
-                     w: rW, h: rH, d: rD, special: special,
+                     w: rW, h: rH, d: rD, special: special, shape: shape,
                      objects: objects, hue: Math.random(), open: false,
                      audioParams: roomAudio };
         plan.rooms.push(room);
         seg.doors.push({ side: side, zPos: doorZ, roomId: room.id });
+      }
+
+      // Branch corridors — perpendicular dead-ends; ~35% chance, not on early segs
+      if (i >= 2 && !special && Math.random() > 0.62) {
+        var bSide = Math.random() > 0.5 ? 'left' : 'right';
+        var hasDoorOnSide = false;
+        for (var dd = 0; dd < seg.doors.length; dd++) {
+          if (seg.doors[dd].side === bSide) { hasDoorOnSide = true; break; }
+        }
+        if (hasDoorOnSide) bSide = (bSide === 'left') ? 'right' : 'left';
+        var stillConflict = false;
+        for (var dd = 0; dd < seg.doors.length; dd++) {
+          if (seg.doors[dd].side === bSide) { stillConflict = true; break; }
+        }
+        if (!stillConflict) {
+          plan.branches.push({
+            id: 'b' + branchIdx++,
+            side:   bSide,
+            zPos:   -(z + len * (0.25 + Math.random() * 0.5)),
+            length: 320 + Math.random() * 440,
+            width:  BRANCH_W,
+            segId:  i
+          });
+        }
       }
 
       plan.segments.push(seg);
@@ -307,7 +339,7 @@
 
   // ── Engine ───────────────────────────────────────────────────────────────────
   initJazzEngine({
-    title: 'Explore', trailOpacity: 0.10,
+    title: 'Explore', trailOpacity: 0.0, antialias: true,
     camera: { position: new THREE.Vector3(0, EYE_Y, 40) },
     bounds: 9000, speed: MOVE_SPEED,
     audio: {
@@ -333,7 +365,7 @@
           uniforms: ss.makeUniforms({
             uColor:     { value: new THREE.Color(color) },
             uDeform:    { value: 0 }, uFFTUV: { value: 1.0 },
-            uLineWidth: { value: lw || 2.4 }
+            uLineWidth: { value: lw || 3.5 }
           }),
           vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
           transparent: true, depthWrite: false, side: THREE.DoubleSide
@@ -367,37 +399,33 @@
           Math.max(1, Math.round(h / TILE)));
       }
 
-      // Build one side wall for a corridor segment, leaving DOOR_W × DOOR_H gaps
-      // at each supplied door Z position (world space).
-      // doorZPositions: array of world-Z values for doors on this side.
-      function buildSideWall(group, mat, side, zStart, zEnd, doorZPositions) {
+      // Build one side wall for a corridor segment with variable-height openings.
+      // openings: [{z, w, h}] — doors use DOOR_W/DOOR_H; branches use BRANCH_W/CORR_H.
+      function buildSideWall(group, mat, side, zStart, zEnd, openings) {
         var wallX  = side === 'left' ? -CORR_HALF : CORR_HALF;
         var wallRY = side === 'left' ?  Math.PI / 2 : -Math.PI / 2;
-        // Sort descending (zStart > zEnd, i.e. near-to-far)
-        var dzs = doorZPositions.slice().sort(function (a, b) { return b - a; });
+        // Sort descending (zStart > zEnd, near-to-far)
+        var sorted = openings.slice().sort(function (a, b) { return b.z - a.z; });
         var cursor = zStart;
 
-        for (var d = 0; d < dzs.length; d++) {
-          var dz      = dzs[d];
-          var dNear   = dz + DOOR_W / 2;
-          var dFar    = dz - DOOR_W / 2;
-          var aboveH  = CORR_H - DOOR_H;
+        for (var d = 0; d < sorted.length; d++) {
+          var op     = sorted[d];
+          var dNear  = op.z + op.w / 2;
+          var dFar   = op.z - op.w / 2;
+          var aboveH = CORR_H - op.h;  // 0 for full-height branch openings
 
-          // Full-height piece from cursor to near edge of door
           var w1 = cursor - dNear;
           if (w1 > 0.5) {
             addSurface(tiledPlane(w1, CORR_H), mat, group,
               wallX, CORR_H / 2, (cursor + dNear) / 2, 0, wallRY, 0);
           }
-          // Above-door strip (DOOR_H → CORR_H) across the door opening
           if (aboveH > 0.5) {
-            addSurface(tiledPlane(DOOR_W, aboveH), mat, group,
-              wallX, DOOR_H + aboveH / 2, dz, 0, wallRY, 0);
+            addSurface(tiledPlane(op.w, aboveH), mat, group,
+              wallX, op.h + aboveH / 2, op.z, 0, wallRY, 0);
           }
           cursor = dFar;
         }
 
-        // Remaining piece after all doors to far end
         var wLast = cursor - zEnd;
         if (wLast > 0.5) {
           addSurface(tiledPlane(wLast, CORR_H), mat, group,
@@ -491,16 +519,49 @@
         addSurface(tiledPlane(CORR_HALF * 2, len), mat, group,
           0, CORR_H, zMid, Math.PI / 2, 0, 0);
 
-        // Side walls — split around any door openings
-        var leftDoors = [], rightDoors = [];
+        // Side walls — openings for doors (partial height) + branches (full height)
+        var leftOps = [], rightOps = [];
         seg.doors.forEach(function (d) {
-          if (d.side === 'left') leftDoors.push(d.zPos);
-          else                   rightDoors.push(d.zPos);
+          var op = { z: d.zPos, w: DOOR_W, h: DOOR_H };
+          if (d.side === 'left') leftOps.push(op); else rightOps.push(op);
         });
-        buildSideWall(group, mat, 'left',  seg.zStart, seg.zEnd, leftDoors);
-        buildSideWall(group, mat, 'right', seg.zStart, seg.zEnd, rightDoors);
+        plan.branches.forEach(function (b) {
+          if (b.segId !== seg.id) return;
+          var op = { z: b.zPos, w: b.width, h: CORR_H };
+          if (b.side === 'left') leftOps.push(op); else rightOps.push(op);
+        });
+        buildSideWall(group, mat, 'left',  seg.zStart, seg.zEnd, leftOps);
+        buildSideWall(group, mat, 'right', seg.zStart, seg.zEnd, rightOps);
 
         corrGroups.push({ zMid: zMid, group: group });
+      });
+
+      // ── Build branch corridors ───────────────────────────────────────────────
+      var branchGroups = [];
+      plan.branches.forEach(function (branch) {
+        var group  = new THREE.Group();
+        scene.add(group);
+        var bSign  = branch.side === 'left' ? -1 : 1;
+        var bX0    = bSign * CORR_HALF;
+        var bLen   = branch.length;
+        var bMidX  = bSign * (CORR_HALF + bLen / 2);
+        var bX1    = bSign * (CORR_HALF + bLen);
+        var bZ     = branch.zPos;
+        var bW     = branch.width;
+        var mat    = wireMat(new THREE.Color(0xffffff));
+
+        // Floor and ceiling
+        addSurface(tiledPlane(bLen, bW), mat, group, bMidX, 0,       bZ, -Math.PI/2, 0, 0);
+        addSurface(tiledPlane(bLen, bW), mat, group, bMidX, CORR_H,  bZ,  Math.PI/2, 0, 0);
+        // Front wall (Z+) faces inward (−Z)
+        addSurface(tiledPlane(bLen, CORR_H), mat, group, bMidX, CORR_H/2, bZ + bW/2, 0, Math.PI, 0);
+        // Back wall (Z−) faces inward (+Z)
+        addSurface(tiledPlane(bLen, CORR_H), mat, group, bMidX, CORR_H/2, bZ - bW/2, 0, 0, 0);
+        // End wall
+        addSurface(tiledPlane(bW, CORR_H), mat, group, bX1, CORR_H/2, bZ,
+          0, bSign > 0 ? -Math.PI/2 : Math.PI/2, 0);
+
+        branchGroups.push({ branch: branch, group: group, midX: bMidX, midZ: bZ });
       });
 
       // End + start caps (always visible — close to origin)
@@ -615,6 +676,14 @@
             if      (d2 > ROOM_HIDE * ROOM_HIDE) rg.group.visible = false;
             else if (d2 < ROOM_SHOW * ROOM_SHOW) rg.group.visible = true;
           }
+          for (var bi = 0; bi < branchGroups.length; bi++) {
+            var bg  = branchGroups[bi];
+            var bdx = camX - bg.midX;
+            var bdz = camZ - bg.midZ;
+            var bd2 = bdx * bdx + bdz * bdz;
+            if      (bd2 > ROOM_HIDE * ROOM_HIDE) bg.group.visible = false;
+            else if (bd2 < ROOM_SHOW * ROOM_SHOW) bg.group.visible = true;
+          }
 
           // ── Door slide-up animation ──────────────────────────────────────────
           for (var a = 0; a < roomGroups.length; a++) {
@@ -677,26 +746,63 @@
           currentVol = currentVol * (1 - smooth) + targetVol * smooth;
           if (window.jazzSetVolume) window.jazzSetVolume(currentVol);
 
-          // ── Collision — keep player inside corridor / open rooms ─────────────
-          // Compute allowed X range at this Z based on open rooms
-          var pz   = camera.position.z;
-          var xLo  = -(CORR_HALF - PLAYER_R);
-          var xHi  =  (CORR_HALF - PLAYER_R);
-          for (var ri = 0; ri < roomGroups.length; ri++) {
-            var prg  = roomGroups[ri];
-            if (!prg.room.open) continue;
-            var prm  = prg.room;
-            var pxSign = prm.side === 'left' ? -1 : 1;
-            var pCX    = pxSign * (CORR_HALF + prm.w / 2);
-            if (Math.abs(pz - prm.zCenter) < prm.d / 2 - PLAYER_R) {
-              if (prm.side === 'left') xLo = Math.min(xLo, pCX - prm.w / 2 + PLAYER_R);
-              else                     xHi = Math.max(xHi, pCX + prm.w / 2 - PLAYER_R);
+          // ── Collision — corridor, open rooms, branch corridors ───────────────
+          var pz = camera.position.z;
+
+          // Check if player is inside a branch (past the corridor wall in X)
+          var activeBranch = null;
+          for (var bi = 0; bi < branchGroups.length; bi++) {
+            var bg    = branchGroups[bi];
+            var b     = bg.branch;
+            var bSign = b.side === 'left' ? -1 : 1;
+            if (camera.position.x * bSign > CORR_HALF + 1 &&
+                Math.abs(pz - b.zPos) < b.width / 2) {
+              activeBranch = bg; break;
             }
           }
-          camera.position.x = Math.max(xLo, Math.min(xHi, camera.position.x));
+
+          if (activeBranch) {
+            var b     = activeBranch.branch;
+            var bSign = b.side === 'left' ? -1 : 1;
+            // Inside branch: clamp Z to branch width, clamp X to branch extents
+            camera.position.z = Math.max(b.zPos - b.width/2 + PLAYER_R,
+                                 Math.min(b.zPos + b.width/2 - PLAYER_R, pz));
+            if (bSign > 0) {
+              camera.position.x = Math.max(CORR_HALF + PLAYER_R,
+                                   Math.min(CORR_HALF + b.length - PLAYER_R, camera.position.x));
+            } else {
+              camera.position.x = Math.max(-(CORR_HALF + b.length - PLAYER_R),
+                                   Math.min(-(CORR_HALF + PLAYER_R), camera.position.x));
+            }
+          } else {
+            // In main corridor: normal X bounds, extended for open rooms + branch entrances
+            var xLo = -(CORR_HALF - PLAYER_R);
+            var xHi =  (CORR_HALF - PLAYER_R);
+            for (var ri = 0; ri < roomGroups.length; ri++) {
+              var prg    = roomGroups[ri];
+              if (!prg.room.open) continue;
+              var prm    = prg.room;
+              var pxSign = prm.side === 'left' ? -1 : 1;
+              var pCX    = pxSign * (CORR_HALF + prm.w / 2);
+              if (Math.abs(pz - prm.zCenter) < prm.d / 2 - PLAYER_R) {
+                if (prm.side === 'left') xLo = Math.min(xLo, pCX - prm.w / 2 + PLAYER_R);
+                else                     xHi = Math.max(xHi, pCX + prm.w / 2 - PLAYER_R);
+              }
+            }
+            // Allow the player to step into branch openings
+            for (var bi = 0; bi < branchGroups.length; bi++) {
+              var bg    = branchGroups[bi];
+              var b     = bg.branch;
+              var bSign = b.side === 'left' ? -1 : 1;
+              if (Math.abs(pz - b.zPos) < b.width / 2 - PLAYER_R) {
+                if (bSign > 0) xHi = Math.max(xHi, CORR_HALF + PLAYER_R + 2);
+                else           xLo = Math.min(xLo, -(CORR_HALF + PLAYER_R + 2));
+              }
+            }
+            camera.position.x = Math.max(xLo, Math.min(xHi, camera.position.x));
+            camera.position.z = Math.max(lastSegZEnd + PLAYER_R, Math.min(40, camera.position.z));
+          }
           camera.position.y = EYE_Y;
-          // Z: stay within corridor length
-          camera.position.z = Math.max(lastSegZEnd + PLAYER_R, Math.min(40, camera.position.z));
 
           // ── Touch look ───────────────────────────────────────────────────────
           if (!document.pointerLockElement && touchEverUsed) {
@@ -755,6 +861,7 @@
           doorHint.style.display = 'none';
           myPitch = 0; myYaw = 0; touchEverUsed = false;
           currentVol = 0; currentAudioRoom = null;
+          branchGroups.forEach(function(bg) { bg.group.visible = true; });
           if (window.jazzSetVolume) window.jazzSetVolume(0);
         }
       };

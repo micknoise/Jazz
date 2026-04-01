@@ -56,7 +56,9 @@
     var camSpeed     = cfg.speed        || 150;
 
     // ── Renderer ────────────────────────────────────────────────────────────
-    var renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+    var renderer = new THREE.WebGLRenderer({
+      antialias: cfg.antialias || false, preserveDrawingBuffer: true
+    });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 1);
@@ -446,10 +448,14 @@
 
       updateScene(fftArray, elapsed, dt);
 
-      // Trail: clear depth only (preserves colour), darken colour with fade quad,
-      // then render scene with a fresh depth buffer.
-      renderer.clearDepth();
-      renderer.render(fadeScene, fadeCamera);
+      // If trail is active, only clear depth so colour persists for the fade quad.
+      // When trail is disabled, do a full clear so nothing accumulates.
+      if (trailOpacity > 0) {
+        renderer.clearDepth();
+        renderer.render(fadeScene, fadeCamera);
+      } else {
+        renderer.clear();
+      }
       renderer.render(scene, camera);
 
       requestAnimationFrame(draw);
