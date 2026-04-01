@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="./maximilian.v.0.1.js"></script>
+  <script src="./enable-threads.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+  <script src="./engine.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Jazz — Explore</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace;
+             border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5);
+             font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hud { position: absolute; top: 16px; right: 16px; color: white; font-family: monospace;
+           font-size: 12px; text-align: right; pointer-events: none; line-height: 1.9; }
+    #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+                 color: rgba(255,255,255,0.35); font-size: 16px; pointer-events: none; }
+    #door-hint { position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+                 color: rgba(255,255,255,0.65); font-family: monospace; font-size: 12px;
+                 letter-spacing: 0.15em; pointer-events: none; display: none; }
+    #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+               color: white; font-family: monospace; text-align: center; pointer-events: none; }
+    #overlay h1 { font-size: 36px; font-weight: normal; letter-spacing: 0.2em; margin-bottom: 12px; }
+    #overlay p  { font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: 0.1em; line-height: 1.9; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hud">
+    <div id="hud-rooms">rooms  0</div>
+    <div id="hud-seg">corridor  1</div>
+  </div>
+  <div id="crosshair">+</div>
+  <div id="door-hint">[ click to open ]</div>
+  <div id="overlay">
+    <h1>explore</h1>
+    <p>click to lock pointer<br>wasd / arrows to move · mouse to look<br>aim at a door and click to open</p>
+  </div>
+
+  <script>
+  // ── World constants ──────────────────────────────────────────────────────────
+  var CORR_HALF  = 48;     // half-width of main corridor
+  var CORR_H     = 115;    // corridor height
+  var EYE_Y      = 72;     // camera eye height
+  var SEG_LEN    = 340;    // normal segment length (z depth)
+  var SEG_SPEC   = 620;    // special segment length
+  var NUM_SEGS   = 22;     // total segments to generate
+  var DOOR_W     = 44;     // door opening width
+  var DOOR_H     = 86;     // door opening height
+  var MAX_DEFORM = 340;    // max FFT deform magnitude for room objects
+  var FFT_BINS   = 256;
+
+  // ── Floor plan pre-generation ────────────────────────────────────────────────
+  function generateFloorPlan() {
+    var plan = { segments: [], rooms: [] };
+    var z = 0;
+    var roomIdx = 0;
+    var rng = Math.random; // could seed here for reproducibility
+
+    for (var i = 0; i < NUM_SEGS; i++) {
+      var special = (i > 0 && i % 5 === 0);
+      var len = special ? SEG_SPEC : SEG_LEN;
+
+      var seg = {
+        id: i,
+        zStart: -z,
+        zEnd: -(z + len),
+        length: len,
+        special: special,
+        doors: []
+      };
+
+      // Place 1–2 doors per segment (always 1 for special)
+      var numDoors = special ? 1 : (rng() > 0.25 ? 1 : 0);
+      if (!special && rng() > 0.55) numDoors = 2;
+
+      var usedSides = {};
+      for (var d = 0; d < numDoors; d++) {
+        var side = rng() > 0.5 ? 'left' : 'right';
+        if (usedSides[side]) side = (side === 'left') ? 'right' : 'left';
+        if (usedSides[side]) continue;
+        usedSides[side] = true;
+
+        // Position door along segment (avoid very ends)
+        var tPos  = 0.25 + rng() * 0.5;
+        var doorZ = -(z + len * tPos);
+
+        var rW = special ? (320 + rng() * 100) : (160 + rng() * 90);
+        var rH = special ? (190 + rng() * 50)  : (110 + rng() * 35);
+        var rD = special ? (380 + rng() * 100) : (190 + rng() * 90);
+
+        var numObjs = special ? 1 : Math.floor(2 + rng() * 4);
+        var objTypes = ['torus','icosahedron','octahedron','sphere','torusKnot'];
+        var objects = [];
+        for (var o = 0; o < numObjs; o++) {
+          objects.push({
+            type:   objTypes[Math.floor(rng() * objTypes.length)],
+            x:      (rng() - 0.5) * rW * 0.55,
+            y:      rH * (0.3 + rng() * 0.35),
+            z:      (rng() - 0.5) * rD * 0.55,
+            scale:  special ? (2.2 + rng() * 1.0) : (0.7 + rng() * 0.9),
+            hue:    rng(),
+            spinX:  (rng() - 0.5) * 0.55,
+            spinY:  (rng() - 0.5) * 0.55,
+            spinZ:  (rng() - 0.5) * 0.25
+          });
+        }
+
+        var room = {
+          id:      'r' + roomIdx++,
+          side:    side,
+          zCenter: doorZ,
+          w: rW, h: rH, d: rD,
+          special: special,
+          objects: objects,
+          hue:     rng(),
+          open:    false
+        };
+        plan.rooms.push(room);
+        seg.doors.push({ side: side, zPos: doorZ, roomId: room.id });
+      }
+
+      plan.segments.push(seg);
+      z += len;
+    }
+
+    return plan;
+  }
+
+  // ── HUD refs ─────────────────────────────────────────────────────────────────
+  var hudRooms  = document.getElementById('hud-rooms');
+  var hudSeg    = document.getElementById('hud-seg');
+  var doorHint  = document.getElementById('door-hint');
+  var overlay   = document.getElementById('overlay');
+
+  // Pre-generate & log the floor plan as JSON so it's inspectable in DevTools
+  var plan = generateFloorPlan();
+  console.log('[Jazz Explore] floor plan:', JSON.stringify(plan, null, 2));
+
+  var totalRooms  = plan.rooms.length;
+  var openedRooms = 0;
+
+  // ── Engine ───────────────────────────────────────────────────────────────────
+  initJazzEngine({
+    title:        'Explore',
+    trailOpacity: 0.10,
+    camera:       { position: new THREE.Vector3(0, EYE_Y, 40) },
+    bounds:       9000,
+    speed:        115,
+    audio: {
+      sparsity_1:         0,
+      sparsity_2:         0.3,
+      tempo:              95,
+      maxTicksPerBeat:    8,
+      fastFreqBase:       180,
+      fastFreqRange:      700,
+      fastModIRange:      16000,
+      decayFeedbackValue: 0.997
+    },
+
+    sceneSetup: function (scene, camera, ss) {
+
+      scene.fog = new THREE.FogExp2(0x000000, 0.0016);
+
+      var doorMeshes  = [];   // checked by raycaster
+      var roomObjects = [];   // { mesh, mat, spinX, spinY, spinZ }
+      var wallMats    = [];   // all wall/floor/ceiling materials (updated for audio wobble)
+      var doorDataMap = [];   // parallel to doorMeshes: { room }
+
+      // ── Material helpers ────────────────────────────────────────────────────
+      function wireMat(color, lw) {
+        var m = new THREE.ShaderMaterial({
+          uniforms: ss.makeUniforms({
+            uColor:     { value: new THREE.Color(color) },
+            uDeform:    { value: 0 },
+            uFFTUV:     { value: 1.0 },
+            uLineWidth: { value: lw || 1.2 }
+          }),
+          vertexShader:   ss.vertexShader,
+          fragmentShader: ss.fragmentShader,
+          transparent: true,
+          depthWrite:  false,
+          side:        THREE.DoubleSide
+        });
+        wallMats.push(m);
+        return m;
+      }
+
+      function addPlane(geo, mat, px, py, pz, rx, ry, rz) {
+        var m = new THREE.Mesh(addBarycentricCoords(geo), mat);
+        m.position.set(px, py, pz);
+        if (rx) m.rotation.x = rx;
+        if (ry) m.rotation.y = ry;
+        if (rz) m.rotation.z = rz;
+        scene.add(m);
+        return m;
+      }
+
+      // ── Corridor walls (floor + ceiling + side walls, per segment) ──────────
+      plan.segments.forEach(function (seg) {
+        var zMid = (seg.zStart + seg.zEnd) / 2;
+        var len  = seg.length;
+        var col  = seg.special
+          ? new THREE.Color().setHSL(0.62, 0.7, 0.12)
+          : new THREE.Color().setHSL(0.57, 0.5, 0.07);
+
+        // Floor and ceiling
+        addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, len, 4, 10), wireMat(col),
+          0, 0, zMid, -Math.PI / 2, 0, 0);
+        addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, len, 4, 10), wireMat(col),
+          0, CORR_H, zMid, Math.PI / 2, 0, 0);
+
+        // Left + right walls (dim, purely structural)
+        addPlane(new THREE.PlaneGeometry(len, CORR_H, 10, 4), wireMat(col),
+          -CORR_HALF, CORR_H / 2, zMid, 0, Math.PI / 2, 0);
+        addPlane(new THREE.PlaneGeometry(len, CORR_H, 10, 4), wireMat(col),
+          CORR_HALF, CORR_H / 2, zMid, 0, -Math.PI / 2, 0);
+      });
+
+      // End cap
+      var lastSeg = plan.segments[plan.segments.length - 1];
+      addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, CORR_H, 5, 4),
+        wireMat(new THREE.Color().setHSL(0.57, 0.6, 0.18)),
+        0, CORR_H / 2, lastSeg.zEnd, 0, 0, 0);
+
+      // Start cap
+      addPlane(new THREE.PlaneGeometry(CORR_HALF * 2, CORR_H, 5, 4),
+        wireMat(new THREE.Color().setHSL(0.57, 0.6, 0.18)),
+        0, CORR_H / 2, 60, 0, Math.PI, 0);
+
+      // ── Rooms ───────────────────────────────────────────────────────────────
+      var roomMap = {};
+      plan.rooms.forEach(function (room) {
+        roomMap[room.id] = room;
+
+        var xSign = room.side === 'left' ? -1 : 1;
+        var rx    = xSign * (CORR_HALF + room.w / 2);
+        var ry    = room.h / 2;
+        var rz    = room.zCenter;
+        var h     = room.hue;
+
+        var wallCol = new THREE.Color().setHSL(h, 0.65, 0.08);
+
+        // Back wall (far from corridor)
+        addPlane(new THREE.PlaneGeometry(room.w, room.h, 7, 4), wireMat(wallCol),
+          rx, ry, rz - xSign * room.d / 2,
+          0, xSign > 0 ? 0 : Math.PI, 0);
+
+        // Far side wall
+        addPlane(new THREE.PlaneGeometry(room.d, room.h, 9, 4), wireMat(wallCol),
+          rx + xSign * room.w / 2, ry, rz,
+          0, xSign * Math.PI / 2, 0);
+
+        // Floor
+        addPlane(new THREE.PlaneGeometry(room.w, room.d, 5, 7), wireMat(wallCol),
+          rx, 0, rz, -Math.PI / 2, 0, 0);
+
+        // Ceiling
+        addPlane(new THREE.PlaneGeometry(room.w, room.d, 5, 7), wireMat(wallCol),
+          rx, room.h, rz, Math.PI / 2, 0, 0);
+
+        // Entrance wall strip above the door (between DOOR_H and room.h)
+        var stripH = room.h - DOOR_H;
+        if (stripH > 2) {
+          addPlane(new THREE.PlaneGeometry(DOOR_W, stripH, 3, 2), wireMat(wallCol),
+            rx - xSign * room.w / 2, DOOR_H + stripH / 2, rz,
+            0, -xSign * Math.PI / 2, 0);
+        }
+
+        // ── Room objects ─────────────────────────────────────────────────────
+        room.objects.forEach(function (obj) {
+          var sz  = 22 * obj.scale;
+          var geo;
+          switch (obj.type) {
+            case 'torus':
+              geo = new THREE.TorusGeometry(sz, sz * 0.32, 8, 36); break;
+            case 'icosahedron':
+              geo = new THREE.IcosahedronGeometry(sz, 2); break;
+            case 'octahedron':
+              geo = new THREE.OctahedronGeometry(sz, 2); break;
+            case 'sphere':
+              geo = new THREE.SphereGeometry(sz, 12, 8); break;
+            case 'torusKnot':
+              geo = new THREE.TorusKnotGeometry(sz * 0.65, sz * 0.18, 90, 8); break;
+            default:
+              geo = new THREE.IcosahedronGeometry(sz, 2);
+          }
+
+          var objCol = new THREE.Color().setHSL(obj.hue, 1.0, 0.48);
+          var mat = new THREE.ShaderMaterial({
+            uniforms: ss.makeUniforms({
+              uColor:     { value: objCol },
+              uDeform:    { value: 0 },
+              uFFTUV:     { value: 0.0 },
+              uLineWidth: { value: 2.2 }
+            }),
+            vertexShader:   ss.vertexShader,
+            fragmentShader: ss.fragmentShader,
+            transparent: true,
+            depthWrite:  false
+          });
+
+          var mesh = new THREE.Mesh(addBarycentricCoords(geo), mat);
+          mesh.position.set(rx + obj.x, obj.y, rz + obj.z);
+          scene.add(mesh);
+
+          roomObjects.push({
+            mesh: mesh, mat: mat,
+            spinX: obj.spinX, spinY: obj.spinY, spinZ: obj.spinZ
+          });
+        });
+      });
+
+      // ── Doors ───────────────────────────────────────────────────────────────
+      plan.segments.forEach(function (seg) {
+        seg.doors.forEach(function (door) {
+          var room  = roomMap[door.roomId];
+          var xSign = door.side === 'left' ? -1 : 1;
+
+          var lum = room.special ? 0.38 : 0.24;
+          var doorCol = new THREE.Color().setHSL(room.hue, 1.0, lum);
+
+          var doorMat = new THREE.ShaderMaterial({
+            uniforms: ss.makeUniforms({
+              uColor:     { value: doorCol },
+              uDeform:    { value: 0 },
+              uFFTUV:     { value: 1.0 },
+              uLineWidth: { value: 2.8 }
+            }),
+            vertexShader:   ss.vertexShader,
+            fragmentShader: ss.fragmentShader,
+            transparent: true,
+            depthWrite:  false,
+            side:        THREE.DoubleSide
+          });
+          wallMats.push(doorMat);
+
+          var mesh = new THREE.Mesh(
+            addBarycentricCoords(new THREE.PlaneGeometry(DOOR_W, DOOR_H, 3, 6)),
+            doorMat
+          );
+          // Position in the corridor wall, slightly offset inward so it doesn't z-fight
+          mesh.position.set(
+            xSign * (CORR_HALF - 0.4),
+            DOOR_H / 2,
+            door.zPos
+          );
+          mesh.rotation.y = xSign * Math.PI / 2;
+          scene.add(mesh);
+
+          doorMeshes.push(mesh);
+          doorDataMap.push(room);
+        });
+      });
+
+      // ── Raycaster ───────────────────────────────────────────────────────────
+      var raycaster     = new THREE.Raycaster();
+      var screenCenter  = new THREE.Vector2(0, 0);
+      var lookingAtDoor = false;
+      var hintTick      = 0;
+
+      function tryOpenDoor() {
+        raycaster.setFromCamera(screenCenter, camera);
+        var visible = doorMeshes.filter(function (m) { return m.visible; });
+        var hits    = raycaster.intersectObjects(visible);
+        if (hits.length > 0 && hits[0].distance < 220) {
+          var idx  = doorMeshes.indexOf(hits[0].object);
+          var room = doorDataMap[idx];
+          hits[0].object.visible = false;
+          room.open = true;
+          openedRooms++;
+          hudRooms.textContent = 'rooms  ' + openedRooms;
+        }
+      }
+
+      // Click while pointer is locked = interaction
+      document.addEventListener('click', function () {
+        overlay.style.display = 'none';
+        if (document.pointerLockElement) tryOpenDoor();
+      });
+
+      // Mobile tap
+      document.addEventListener('touchend', function () {
+        overlay.style.display = 'none';
+        tryOpenDoor();
+      }, { passive: true });
+
+      // ── Update ──────────────────────────────────────────────────────────────
+      return {
+        update: function (fftArray, elapsed, dt) {
+          var rms = window.jazzRMS || 0;
+
+          // Animate room objects with live FFT
+          for (var i = 0; i < roomObjects.length; i++) {
+            var o = roomObjects[i];
+            o.mat.uniforms.uDeform.value = rms * MAX_DEFORM;
+            o.mat.uniforms.uTime.value   = elapsed;
+            o.mesh.rotation.x += o.spinX * dt;
+            o.mesh.rotation.y += o.spinY * dt;
+            o.mesh.rotation.z += o.spinZ * dt;
+          }
+
+          // Subtle corridor audio wobble
+          for (var j = 0; j < wallMats.length; j++) {
+            wallMats[j].uniforms.uDeform.value = rms * 20;
+            wallMats[j].uniforms.uTime.value   = elapsed;
+          }
+
+          // HUD: current segment
+          var camZ = camera.position.z;
+          for (var k = 0; k < plan.segments.length; k++) {
+            var s = plan.segments[k];
+            if (camZ <= s.zStart && camZ >= s.zEnd) {
+              hudSeg.textContent = 'corridor  ' + (k + 1) + (s.special ? '  ★' : '');
+              break;
+            }
+          }
+
+          // Door hint (check every 8 frames)
+          hintTick++;
+          if (hintTick % 8 === 0 && document.pointerLockElement) {
+            raycaster.setFromCamera(screenCenter, camera);
+            var vis  = doorMeshes.filter(function (m) { return m.visible; });
+            var hits2 = raycaster.intersectObjects(vis);
+            lookingAtDoor = hits2.length > 0 && hits2[0].distance < 220;
+            doorHint.style.display = lookingAtDoor ? 'block' : 'none';
+          } else if (!document.pointerLockElement) {
+            doorHint.style.display = 'none';
+          }
+        },
+
+        reset: function () {
+          openedRooms = 0;
+          doorMeshes.forEach(function (m) { m.visible = true; });
+          plan.rooms.forEach(function (r) { r.open = false; });
+          hudRooms.textContent = 'rooms  0';
+          doorHint.style.display = 'none';
+        }
+      };
+    }
+  });
+  </script>
+</body>
+</html>
