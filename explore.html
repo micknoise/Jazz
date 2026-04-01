@@ -20,6 +20,9 @@
     button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5);
              font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
     button:hover { background: rgba(255,255,255,0.1); }
+    .slider-wrap { display: flex; align-items: center; gap: 6px; font-size: 11px;
+                   font-family: monospace; color: rgba(255,255,255,0.55); }
+    .slider-wrap input[type=range] { width: 80px; accent-color: rgba(255,255,255,0.6); cursor: pointer; }
     #hud { position: absolute; top: 16px; right: 16px; color: white; font-family: monospace;
            font-size: 12px; text-align: right; pointer-events: none; line-height: 1.9; }
     #crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -52,6 +55,9 @@
     <button id="playButton">play</button>
     <button id="resetButton">reset</button>
     <button id="fsButton">⛶ fullscreen</button>
+    <label class="slider-wrap">deform
+      <input type="range" id="deformSlider" min="0" max="600" step="10" value="100">
+    </label>
   </div>
   <div id="hud">
     <div id="hud-rooms">rooms  0</div>
@@ -78,7 +84,7 @@
   var NUM_SEGS   = 22;
   var DOOR_W     = 44;
   var DOOR_H     = 86;
-  var MAX_DEFORM = 600;
+  var MAX_DEFORM = 100;
   var PLAYER_R   = 12;   // collision radius
   var MOVE_SPEED = 115;
   var JOY_RADIUS = 44;
@@ -252,6 +258,9 @@
   var hudSeg   = document.getElementById('hud-seg');
   var doorHint = document.getElementById('door-hint');
   var overlay  = document.getElementById('overlay');
+
+  var deformSlider = document.getElementById('deformSlider');
+  function getDeform() { return parseFloat(deformSlider.value); }
 
   var plan = generateFloorPlan();
   console.log('[Jazz Explore] floor plan:', JSON.stringify(plan, null, 2));
@@ -607,7 +616,7 @@
           // ── Room objects: live FFT deform + spin ─────────────────────────────
           for (var i = 0; i < allRoomObjs.length; i++) {
             var o = allRoomObjs[i];
-            o.mat.uniforms.uDeform.value = MAX_DEFORM;
+            o.mat.uniforms.uDeform.value = getDeform();
             o.mat.uniforms.uTime.value   = elapsed;
             o.mesh.rotation.x += o.spinX * dt;
             o.mesh.rotation.y += o.spinY * dt;
@@ -616,7 +625,7 @@
 
           // ── Corridor wall audio wobble ────────────────────────────────────────
           for (var j = 0; j < wallMats.length; j++) {
-            wallMats[j].uniforms.uDeform.value = 45;
+            wallMats[j].uniforms.uDeform.value = getDeform() * 0.45;
             wallMats[j].uniforms.uTime.value   = elapsed;
           }
 
