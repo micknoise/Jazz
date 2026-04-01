@@ -448,9 +448,9 @@
 
       updateScene(fftArray, elapsed, dt);
 
-      // If trail is active, only clear depth so colour persists for the fade quad.
-      // When trail is disabled, do a full clear so nothing accumulates.
-      if (trailOpacity > 0) {
+      // Use fadeMat.opacity (live, slider-controlled) not the initial trailOpacity.
+      // opacity=0 → full clear (no trail); opacity>0 → depth-only clear + fade quad.
+      if (fadeMat.opacity > 0) {
         renderer.clearDepth();
         renderer.render(fadeScene, fadeCamera);
       } else {
