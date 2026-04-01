@@ -79,7 +79,7 @@
   var MAX_DEFORM = 340;
   var MOVE_SPEED = 115;
   var JOY_RADIUS = 44;
-  var LOOK_SENS  = 0.0032;
+  var LOOK_SENS  = 0.006;
   // Culling: show/hide distances (XZ plane for rooms, Z-axis for corridors)
   var ROOM_SHOW  = 640;
   var ROOM_HIDE  = 740;
@@ -362,7 +362,8 @@
         });
 
         var rg = { room: room, group: group, centerX: centerX, objects: objs,
-                   doorMesh: null, doorMaskMesh: null };
+                   doorPivot: null, doorMesh: null, doorMaskMesh: null,
+                   opening: false, openY: 0 };
         roomGroups.push(rg);
         roomById[room.id] = rg;
       });
@@ -419,19 +420,24 @@
           wallMats.push(doorMat);
 
           var doorGeo = new THREE.PlaneGeometry(DOOR_W, DOOR_H, 3, 6);
-          var px = xSign * (CORR_HALF - 0.4), py = DOOR_H / 2, pz = door.zPos;
-          var ry = xSign * Math.PI / 2;
 
-          // Depth mask mesh (makes the closed door opaque to depth)
+          // Pivot sits at the bottom-centre of the doorway in the wall.
+          // Sliding its Y up animates the door rising into the ceiling.
+          var pivot = new THREE.Group();
+          pivot.position.set(xSign * (CORR_HALF - 0.4), 0, door.zPos);
+          pivot.rotation.y = xSign * Math.PI / 2;
+          rg.group.add(pivot);
+
+          // Both meshes are children of the pivot, offset to door centre height
           var maskMesh = new THREE.Mesh(doorGeo, maskMat);
-          maskMesh.position.set(px, py, pz); maskMesh.rotation.y = ry;
-          rg.group.add(maskMesh);
+          maskMesh.position.y = DOOR_H / 2;
+          pivot.add(maskMesh);
 
-          // Wireframe mesh
           var wireMesh = new THREE.Mesh(addBarycentricCoords(doorGeo), doorMat);
-          wireMesh.position.set(px, py, pz); wireMesh.rotation.y = ry;
-          rg.group.add(wireMesh);
+          wireMesh.position.y = DOOR_H / 2;
+          pivot.add(wireMesh);
 
+          rg.doorPivot    = pivot;
           rg.doorMesh     = wireMesh;
           rg.doorMaskMesh = maskMesh;
         });
@@ -446,7 +452,7 @@
         raycaster.setFromCamera(screenCenter, camera);
         var candidates = [];
         roomGroups.forEach(function (rg) {
-          if (rg.group.visible && rg.doorMesh && rg.doorMesh.visible) {
+          if (rg.group.visible && rg.doorMesh && !rg.room.open) {
             candidates.push(rg.doorMesh);
           }
         });
@@ -454,9 +460,8 @@
         if (hits.length > 0 && hits[0].distance < 220) {
           var hit = hits[0].object;
           var rg  = roomGroups.find(function (r) { return r.doorMesh === hit; });
-          if (rg) {
-            rg.doorMesh.visible     = false;
-            rg.doorMaskMesh.visible = false;
+          if (rg && !rg.opening) {
+            rg.opening   = true;
             rg.room.open = true;
             openedRooms++;
             hudRooms.textContent = 'rooms  ' + openedRooms;
@@ -496,6 +501,19 @@
             var d2  = rdx * rdx + rdz * rdz;
             if      (d2 > ROOM_HIDE * ROOM_HIDE) rg.group.visible = false;
             else if (d2 < ROOM_SHOW * ROOM_SHOW) rg.group.visible = true;
+          }
+
+          // ── Door slide-up animation ──────────────────────────────────────────
+          for (var a = 0; a < roomGroups.length; a++) {
+            var ag = roomGroups[a];
+            if (ag.opening) {
+              ag.openY += 260 * dt;
+              ag.doorPivot.position.y = ag.openY;
+              if (ag.openY >= DOOR_H) {
+                ag.doorPivot.visible = false;
+                ag.opening = false;
+              }
+            }
           }
 
           // ── Room objects: live FFT deform + spin ─────────────────────────────
@@ -546,7 +564,7 @@
             raycaster.setFromCamera(screenCenter, camera);
             var cands = [];
             roomGroups.forEach(function (rg) {
-              if (rg.group.visible && rg.doorMesh && rg.doorMesh.visible)
+              if (rg.group.visible && rg.doorMesh && !rg.room.open)
                 cands.push(rg.doorMesh);
             });
             var h = raycaster.intersectObjects(cands);
@@ -559,8 +577,12 @@
         reset: function () {
           openedRooms = 0;
           roomGroups.forEach(function (rg) {
-            if (rg.doorMesh)     rg.doorMesh.visible     = true;
-            if (rg.doorMaskMesh) rg.doorMaskMesh.visible = true;
+            if (rg.doorPivot) {
+              rg.doorPivot.position.y = 0;
+              rg.doorPivot.visible    = true;
+            }
+            rg.opening   = false;
+            rg.openY     = 0;
             rg.room.open = false;
           });
           hudRooms.textContent = 'rooms  0';
