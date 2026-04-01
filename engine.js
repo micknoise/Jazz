@@ -274,7 +274,7 @@
     var analyser, floatFreqData, linArray, sampleRate;
     var playing = false, engineReady = false;
 
-    initAudioEngine('https://louismac.github.io/maximilian-js-local')
+    initAudioEngine(document.location.origin + '/libs')
       .then(function (dspEngine) {
         maxi = dspEngine;
         sendRealtimeParams();

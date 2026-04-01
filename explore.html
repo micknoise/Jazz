@@ -181,13 +181,52 @@
           if (seg.doors[dd].side === bSide) { stillConflict = true; break; }
         }
         if (!stillConflict) {
+          var bId  = branchIdx++;
+          var bEnd = null;
+          if (Math.random() > 0.4) { // 60% chance of end room
+            var brW = 260 + Math.random() * 200;
+            var brH = 140 + Math.random() * 80;
+            var brD = 240 + Math.random() * 180;
+            var brObjs = [];
+            var brObjTypes = ['torus','icosahedron','octahedron','sphere','torusKnot'];
+            for (var bo = 0; bo < 1 + Math.floor(Math.random() * 2); bo++) {
+              brObjs.push({
+                type:  brObjTypes[Math.floor(Math.random() * brObjTypes.length)],
+                x:     (Math.random() - 0.5) * brW * 0.5,
+                y:     brH * (0.2 + Math.random() * 0.35),
+                z:     (Math.random() - 0.5) * brD * 0.5,
+                scale: 0.6 + Math.random() * 0.9,
+                hue:   Math.random(),
+                spinX: (Math.random() - 0.5) * 0.5,
+                spinY: (Math.random() - 0.5) * 0.5,
+                spinZ: (Math.random() - 0.5) * 0.25
+              });
+            }
+            bEnd = {
+              id: 'er' + bId, w: brW, h: brH, d: brD, open: false,
+              objects: brObjs,
+              audioParams: {
+                sparsity_1: 0.05 + Math.random() * 0.35,
+                sparsity_2: 0.15 + Math.random() * 0.40,
+                maxTicksPerBeat: 3 + Math.floor(Math.random() * 10),
+                slowFreq2: 20 + Math.random() * 500,
+                slowModI:  Math.random() * 10,
+                fastFreqBase:  60 + Math.random() * 600,
+                fastFreqRange: 100 + Math.random() * 700,
+                decayFeedbackValue: 0.993 + Math.random() * 0.006,
+                fastFreq2Range: 60 + Math.random() * 900,
+                fastModIRange: 1000 + Math.random() * 16000
+              }
+            };
+          }
           plan.branches.push({
-            id: 'b' + branchIdx++,
-            side:   bSide,
-            zPos:   -(z + len * (0.25 + Math.random() * 0.5)),
-            length: 320 + Math.random() * 440,
-            width:  BRANCH_W,
-            segId:  i
+            id: 'b' + bId,
+            side:    bSide,
+            zPos:    -(z + len * (0.25 + Math.random() * 0.5)),
+            length:  320 + Math.random() * 440,
+            width:   BRANCH_W,
+            segId:   i,
+            endRoom: bEnd
           });
         }
       }
@@ -558,11 +597,101 @@
         addSurface(tiledPlane(bLen, CORR_H), mat, group, bMidX, CORR_H/2, bZ + bW/2, 0, Math.PI, 0);
         // Back wall (Z−) faces inward (+Z)
         addSurface(tiledPlane(bLen, CORR_H), mat, group, bMidX, CORR_H/2, bZ - bW/2, 0, 0, 0);
-        // End wall
-        addSurface(tiledPlane(bW, CORR_H), mat, group, bX1, CORR_H/2, bZ,
-          0, bSign > 0 ? -Math.PI/2 : Math.PI/2, 0);
+        // End wall — solid if no room, door-opening if end room present
+        var wallRY       = bSign > 0 ? -Math.PI / 2 : Math.PI / 2;
+        var erDoorPivot  = null;
+        var erDoorMesh   = null;
+        var erX1abs      = null;
+        var erD          = null;
 
-        branchGroups.push({ branch: branch, group: group, midX: bMidX, midZ: bZ });
+        if (branch.endRoom) {
+          var er   = branch.endRoom;
+          var sideW = (bW - DOOR_W) / 2;
+          var topH  = CORR_H - DOOR_H;
+          // Side panels around door opening
+          if (sideW > 0.5) {
+            addSurface(tiledPlane(sideW, DOOR_H), mat, group,
+              bX1, DOOR_H / 2, bZ + DOOR_W / 2 + sideW / 2, 0, wallRY, 0);
+            addSurface(tiledPlane(sideW, DOOR_H), mat, group,
+              bX1, DOOR_H / 2, bZ - DOOR_W / 2 - sideW / 2, 0, wallRY, 0);
+          }
+          // Lintel above door
+          if (topH > 0.5) {
+            addSurface(tiledPlane(bW, topH), mat, group,
+              bX1, DOOR_H + topH / 2, bZ, 0, wallRY, 0);
+          }
+
+          // End room geometry (extends in X beyond bX1)
+          var erX1   = bX1 + bSign * er.w;
+          var erMidX = bX1 + bSign * er.w / 2;
+          var erMat  = wireMat(new THREE.Color(0xffffff));
+          // Far wall
+          addSurface(tiledPlane(er.d, er.h), erMat, group,
+            erX1, er.h / 2, bZ, 0, bSign > 0 ? Math.PI : 0, 0);
+          // Side walls (in Z direction)
+          addSurface(tiledPlane(er.w, er.h), erMat, group,
+            erMidX, er.h / 2, bZ + er.d / 2, 0,  Math.PI / 2, 0);
+          addSurface(tiledPlane(er.w, er.h), erMat, group,
+            erMidX, er.h / 2, bZ - er.d / 2, 0, -Math.PI / 2, 0);
+          // Floor and ceiling
+          addSurface(tiledPlane(er.w, er.d), erMat, group, erMidX, 0,    bZ, -Math.PI / 2, 0, 0);
+          addSurface(tiledPlane(er.w, er.d), erMat, group, erMidX, er.h, bZ,  Math.PI / 2, 0, 0);
+
+          // Room objects
+          er.objects.forEach(function (obj) {
+            var sz = 22 * obj.scale;
+            var geo;
+            switch (obj.type) {
+              case 'torus':       geo = new THREE.TorusGeometry(sz, sz * 0.32, 8, 36);            break;
+              case 'icosahedron': geo = new THREE.IcosahedronGeometry(sz, 2);                      break;
+              case 'octahedron':  geo = new THREE.OctahedronGeometry(sz, 2);                       break;
+              case 'sphere':      geo = new THREE.SphereGeometry(sz, 12, 8);                       break;
+              case 'torusKnot':   geo = new THREE.TorusKnotGeometry(sz * 0.65, sz * 0.18, 90, 8); break;
+              default:            geo = new THREE.IcosahedronGeometry(sz, 2);
+            }
+            var oMat = new THREE.ShaderMaterial({
+              uniforms: ss.makeUniforms({ uColor: { value: new THREE.Color().setHSL(obj.hue, 0.72, 0.44) }, uDeform: { value: 0 }, uFFTUV: { value: 0.0 }, uLineWidth: { value: 2.2 } }),
+              vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
+              transparent: true, depthWrite: false
+            });
+            var mesh = new THREE.Mesh(addBarycentricCoords(geo), oMat);
+            mesh.position.set(erMidX + obj.x, obj.y, bZ + obj.z);
+            group.add(mesh);
+            allRoomObjs.push({ mesh: mesh, mat: oMat, spinX: obj.spinX, spinY: obj.spinY, spinZ: obj.spinZ });
+          });
+
+          // Door pivot + mesh
+          var erDoorMatShader = new THREE.ShaderMaterial({
+            uniforms: ss.makeUniforms({ uColor: { value: new THREE.Color(0xffffff) }, uDeform: { value: 0 }, uFFTUV: { value: 1.0 }, uLineWidth: { value: 2.8 } }),
+            vertexShader: ss.vertexShader, fragmentShader: ss.fragmentShader,
+            transparent: true, depthWrite: false, side: THREE.DoubleSide
+          });
+          wallMats.push(erDoorMatShader);
+          var erDoorGeo = tiledPlane(DOOR_W, DOOR_H);
+          erDoorPivot = new THREE.Group();
+          erDoorPivot.position.set(bX1, 0, bZ);
+          erDoorPivot.rotation.y = wallRY;
+          group.add(erDoorPivot);
+          var erMaskMesh = new THREE.Mesh(erDoorGeo, maskMat);
+          erMaskMesh.position.y = DOOR_H / 2;
+          erDoorPivot.add(erMaskMesh);
+          erDoorMesh = new THREE.Mesh(addBarycentricCoords(erDoorGeo), erDoorMatShader);
+          erDoorMesh.position.y = DOOR_H / 2;
+          erDoorPivot.add(erDoorMesh);
+
+          erX1abs = Math.abs(erX1);
+          erD     = er.d;
+        } else {
+          // Solid end wall
+          addSurface(tiledPlane(bW, CORR_H), mat, group, bX1, CORR_H / 2, bZ, 0, wallRY, 0);
+        }
+
+        branchGroups.push({
+          branch: branch, group: group, midX: bMidX, midZ: bZ,
+          doorPivot: erDoorPivot, doorMesh: erDoorMesh,
+          room: branch.endRoom,   // for unified audio param lookup
+          opening: false, openY: 0, erX1abs: erX1abs, erD: erD
+        });
       });
 
       // End + start caps (always visible — close to origin)
@@ -630,15 +759,23 @@
             candidates.push(rg.doorMesh);
           }
         });
+        branchGroups.forEach(function (bg) {
+          if (bg.group.visible && bg.doorMesh && bg.room && !bg.room.open) {
+            candidates.push(bg.doorMesh);
+          }
+        });
         var hits = raycaster.intersectObjects(candidates);
         if (hits.length > 0 && hits[0].distance < 220) {
           var hit = hits[0].object;
           var rg  = roomGroups.find(function (r) { return r.doorMesh === hit; });
           if (rg && !rg.opening) {
-            rg.opening   = true;
-            rg.room.open = true;
-            openedRooms++;
-            hudRooms.textContent = 'rooms  ' + openedRooms;
+            rg.opening = true; rg.room.open = true;
+            openedRooms++; hudRooms.textContent = 'rooms  ' + openedRooms;
+          }
+          var bg = branchGroups.find(function (b) { return b.doorMesh === hit; });
+          if (bg && !bg.opening && bg.room) {
+            bg.opening = true; bg.room.open = true;
+            openedRooms++; hudRooms.textContent = 'rooms  ' + openedRooms;
           }
         }
       }
@@ -698,6 +835,17 @@
               }
             }
           }
+          for (var ab = 0; ab < branchGroups.length; ab++) {
+            var abg = branchGroups[ab];
+            if (abg.opening) {
+              abg.openY += 260 * dt;
+              abg.doorPivot.position.y = abg.openY;
+              if (abg.openY >= DOOR_H) {
+                abg.doorPivot.visible = false;
+                abg.opening = false;
+              }
+            }
+          }
 
           // ── Room objects: FFT deform + spin ──────────────────────────────────
           for (var i = 0; i < allRoomObjs.length; i++) {
@@ -736,9 +884,28 @@
             if (vol > targetVol) { targetVol = vol; bestRoom = vrg; }
           }
 
+          // Branch end room volume
+          for (var bv = 0; bv < branchGroups.length; bv++) {
+            var vbg = branchGroups[bv];
+            if (!vbg.room || !vbg.room.open) continue;
+            var er  = vbg.room;
+            var bvSign = vbg.branch.side === 'left' ? -1 : 1;
+            var bX1v   = bvSign * (CORR_HALF + vbg.branch.length);
+            // X depth: 0 at branch end wall, 1 deep inside end room
+            var xDepthBr = Math.max(0, Math.min(1,
+              (camX * bvSign - Math.abs(bX1v)) / (er.w * 0.45)));
+            // Z fade based on room depth
+            var zDistBr = Math.abs(camZ - vbg.branch.zPos);
+            var zFadeBr = 1 - Math.max(0, Math.min(1,
+              (zDistBr - er.d * 0.5) / VOL_Z_MARGIN));
+            if (zFadeBr <= 0) continue;
+            var volBr = (0.10 + xDepthBr * 0.90) * zFadeBr;
+            if (volBr > targetVol) { targetVol = volBr; bestRoom = vbg; }
+          }
+
           if (bestRoom !== currentAudioRoom) {
             currentAudioRoom = bestRoom;
-            if (bestRoom && window.jazzSetAudioParams)
+            if (bestRoom && bestRoom.room && window.jazzSetAudioParams)
               window.jazzSetAudioParams(bestRoom.room.audioParams);
           }
 
@@ -756,7 +923,7 @@
             var bg    = branchGroups[bi];
             var b     = bg.branch;
             var bSign = b.side === 'left' ? -1 : 1;
-            if (camera.position.x * bSign > CORR_HALF - PLAYER_R &&
+            if (camera.position.x * bSign > CORR_HALF &&
                 Math.abs(pz - b.zPos) < b.width / 2) {
               activeBranch = bg; break;
             }
@@ -768,12 +935,25 @@
             // Inside branch: clamp Z to branch width, clamp X to branch extents
             camera.position.z = Math.max(b.zPos - b.width/2 + PLAYER_R,
                                  Math.min(b.zPos + b.width/2 - PLAYER_R, pz));
+            var bX1 = bSign * (CORR_HALF + b.length);
+            var xMaxBranch = b.endRoom && b.endRoom.open
+              ? b.length + b.endRoom.w - PLAYER_R
+              : b.length - PLAYER_R;
             if (bSign > 0) {
-              camera.position.x = Math.max(CORR_HALF + PLAYER_R,
-                                   Math.min(CORR_HALF + b.length - PLAYER_R, camera.position.x));
+              camera.position.x = Math.max(CORR_HALF - 1,
+                                   Math.min(CORR_HALF + xMaxBranch, camera.position.x));
+              // Extra Z clamp inside end room
+              if (b.endRoom && b.endRoom.open && camera.position.x > Math.abs(bX1) - PLAYER_R) {
+                camera.position.z = Math.max(b.zPos - b.endRoom.d / 2 + PLAYER_R,
+                                     Math.min(b.zPos + b.endRoom.d / 2 - PLAYER_R, pz));
+              }
             } else {
-              camera.position.x = Math.max(-(CORR_HALF + b.length - PLAYER_R),
-                                   Math.min(-(CORR_HALF + PLAYER_R), camera.position.x));
+              camera.position.x = Math.max(-(CORR_HALF + xMaxBranch),
+                                   Math.min(-(CORR_HALF - 1), camera.position.x));
+              if (b.endRoom && b.endRoom.open && camera.position.x < -Math.abs(bX1) + PLAYER_R) {
+                camera.position.z = Math.max(b.zPos - b.endRoom.d / 2 + PLAYER_R,
+                                     Math.min(b.zPos + b.endRoom.d / 2 - PLAYER_R, pz));
+              }
             }
           } else {
             // In main corridor: normal X bounds, extended for open rooms + branch entrances
@@ -865,7 +1045,12 @@
           doorHint.style.display = 'none';
           myPitch = 0; myYaw = 0; touchEverUsed = false;
           currentVol = 0; currentAudioRoom = null;
-          branchGroups.forEach(function(bg) { bg.group.visible = true; });
+          branchGroups.forEach(function(bg) {
+            bg.group.visible = true;
+            if (bg.room) { bg.room.open = false; }
+            if (bg.doorPivot) { bg.doorPivot.visible = true; bg.doorPivot.position.y = 0; }
+            bg.opening = false; bg.openY = 0;
+          });
           if (window.jazzSetVolume) window.jazzSetVolume(0);
         }
       };
