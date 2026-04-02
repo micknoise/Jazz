@@ -3,24 +3,38 @@
 <head>
   <meta charset="utf-8">
   <title>A-Frame test</title>
+  <!-- Try A-Frame from its own CDN (aframe.io) -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <style>
-    body { margin: 0; background: #000; }
-    #info { position: absolute; top: 8px; left: 8px; color: #fff; font-family: monospace; font-size: 13px; z-index: 10; }
+    body { margin: 0; }
+    #status { position: absolute; top: 0; left: 0; right: 0; padding: 8px;
+              background: rgba(0,0,0,0.8); color: #fff; font-family: monospace;
+              font-size: 12px; z-index: 999; pointer-events: none; }
   </style>
 </head>
 <body>
-  <div id="info">If A-Frame works you should see a red box and a white sphere below.</div>
-  <a-scene vr-mode-ui="enabled: false">
-    <a-box color="#ff2222" position="-1 0 -3" rotation="0 45 0"></a-box>
-    <a-sphere color="#ffffff" radius="0.5" position="1 0 -3"></a-sphere>
-    <a-sky color="#111111"></a-sky>
-    <a-entity camera look-controls position="0 0 0"></a-entity>
+  <div id="status">checking...</div>
+
+  <!-- A-Frame Hello World — no custom code, no custom camera -->
+  <a-scene>
+    <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"></a-box>
+    <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E"></a-sphere>
+    <a-plane position="0 0 -4" rotation="-90 0 0" width="4" height="4" color="#7BC8A4"></a-plane>
+    <a-sky color="#ECECEC"></a-sky>
   </a-scene>
+
   <script>
-    document.querySelector('a-scene').addEventListener('loaded', function() {
-      document.getElementById('info').textContent = 'A-Frame loaded OK — you should see a red box and white sphere.';
-    });
+    var s = document.getElementById('status');
+    if (typeof AFRAME === 'undefined') {
+      s.textContent = 'FAIL: AFRAME not defined — script did not load (blocked CDN?)';
+      s.style.background = 'red';
+    } else {
+      s.textContent = 'AFRAME v' + AFRAME.version + ' loaded. Waiting for scene...';
+      document.querySelector('a-scene').addEventListener('loaded', function() {
+        s.textContent = 'Scene loaded OK. You should see a blue box, red sphere, green floor.';
+        s.style.background = 'green';
+      });
+    }
   </script>
 </body>
 </html>
