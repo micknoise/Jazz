@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+  <script src="./jazz-aframe.js"></script>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Jazz — Sphere (A-Frame)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #ui { position: absolute; top: 16px; left: 16px; z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; }
+    a.back { color: white; text-decoration: none; font-size: 13px; font-family: monospace; border: 1px solid rgba(255,255,255,0.5); padding: 6px 12px; }
+    a.back:hover { background: rgba(255,255,255,0.1); }
+    button { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); font-size: 13px; font-family: monospace; padding: 6px 12px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,0.1); }
+    #hint { position: absolute; bottom: 16px; left: 16px; color: rgba(255,255,255,0.3); font-size: 11px; font-family: monospace; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <a class="back" href="index.html">← gallery</a>
+    <button id="playButton">play</button>
+    <button id="resetButton">reset</button>
+  </div>
+  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+
+  <a-scene
+    renderer="preserveDrawingBuffer: true; antialias: false"
+    jazz-trails="opacity: 0.08"
+    jazz-audio="tempo: 75;
+                sparsity_1: 0.6;
+                sparsity_2: 0.7;
+                fastModIRange: 15000;
+                positiveFeedbackValue: 1.000005;
+                decayFeedbackValue: 0.9995"
+    vr-mode-ui="enabled: false"
+    background="color: #000000"
+  >
+    <a-entity
+      jazz-sphere="radius: 200; segments: 22; deform: 1000; lineWidth: 2; fftUV: 0"
+      position="0 0 0"
+    ></a-entity>
+
+    <a-camera
+      data-init-position="0 0 500"
+      position="0 0 500"
+      near="1"
+      far="10000"
+      look-controls="pointerLockEnabled: true; magicWindowTrackingEnabled: false"
+      wasd-controls="acceleration: 500; fly: true"
+    ></a-camera>
+  </a-scene>
+
+  <script>
+    // Store the camera's initial position for reset
+    document.querySelector('[camera]').setAttribute('data-init-position', '0 0 500');
+  </script>
+</body>
+</html>
