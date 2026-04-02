@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
-  <script src="./jazz-aframe.js"></script>
   <meta http-equiv="content-type" content="text/html; charset=UTF-8">
   <title>Jazz — Sphere (A-Frame)</title>
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+  <script src="./jazz-aframe.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; }
@@ -18,41 +18,39 @@
 </head>
 <body>
   <div id="ui">
-    <a class="back" href="index.html">← gallery</a>
+    <a class="back" href="index.html">&larr; gallery</a>
     <button id="playButton">play</button>
     <button id="resetButton">reset</button>
   </div>
-  <div id="hint">click canvas · wasd = move · mouse = look · q/e = up/down</div>
+  <div id="hint">click canvas &middot; wasd = move &middot; mouse = look &middot; q/e = up/down</div>
 
   <a-scene
     renderer="preserveDrawingBuffer: true; antialias: false"
     jazz-trails="opacity: 0.08"
-    jazz-audio="tempo: 75;
-                sparsity_1: 0.6;
-                sparsity_2: 0.7;
-                fastModIRange: 15000;
-                positiveFeedbackValue: 1.000005;
-                decayFeedbackValue: 0.9995"
-    vr-mode-ui="enabled: false"
-  >
-    <a-entity
-      jazz-sphere="radius: 200; segments: 22; deform: 1000; lineWidth: 2; fftUV: 0"
-      position="0 0 0"
-    ></a-entity>
+    jazz-audio="tempo: 75; sparsity_1: 0.6; sparsity_2: 0.7; fastModIRange: 15000; positiveFeedbackValue: 1.000005; decayFeedbackValue: 0.9995"
+    vr-mode-ui="enabled: false">
 
-    <a-camera
-      data-init-position="0 0 500"
+    <!-- Diagnostic: a plain red A-Frame sphere to confirm rendering works -->
+    <a-sphere color="#ff4444" radius="20" position="0 0 0" opacity="0.8"></a-sphere>
+
+    <!-- Our wireframe sphere -->
+    <a-entity jazz-sphere="radius: 200; segments: 22; deform: 1000; lineWidth: 2; fftUV: 0"></a-entity>
+
+    <!-- Camera: use a-entity with camera component explicitly, userHeight 0 to disable offset -->
+    <a-entity
+      id="camera"
+      camera="userHeight: 0; near: 1; far: 10000"
       position="0 0 500"
-      near="1"
-      far="10000"
       look-controls="pointerLockEnabled: true; magicWindowTrackingEnabled: false"
       wasd-controls="acceleration: 500; fly: true"
-    ></a-camera>
+    ></a-entity>
+
   </a-scene>
 
   <script>
-    // Store the camera's initial position for reset
-    document.querySelector('[camera]').setAttribute('data-init-position', '0 0 500');
+    document.querySelector('a-scene').addEventListener('loaded', function () {
+      console.log('scene loaded');
+    });
   </script>
 </body>
 </html>

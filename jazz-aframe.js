@@ -48,16 +48,16 @@
     '}'
   ].join('\n');
 
-  // ── FM AudioWorklet (pure Web Audio, no WASM) ────────────────────────────────
-  // Faithfully replicates the Maximilian DSP code from engine.js:
-  // two clocks (slow beat + fast subdivision), FM synthesis, envelope decay.
+  // ── FM AudioWorklet source (stored as string for Blob URL loading) ───────────
+  // Two clocks (c=fast subdivisions, d=slow beat), FM synthesis with phase
+  // accumulators. Mirrors the Maximilian DSP logic from engine.js.
   var FM_WORKLET_SRC = [
     'class JazzFMProcessor extends AudioWorkletProcessor {',
     '  constructor(options) {',
     '    super();',
     '    var p = (options && options.processorOptions) ? options.processorOptions : {};',
     '    var sr = sampleRate;',
-    '    var tempo       = p.tempo       || 90;',
+    '    var tempo        = p.tempo        || 90;',
     '    var ticksPerBeat = p.ticksPerBeat || 4;',
     '    // Clock C: fast subdivisions',
     '    this._cCounter = 0;',
@@ -67,9 +67,10 @@
     '    this._dCounter = 0;',
     '    this._dPeriod  = sr * 60 / tempo;',
     '    this._dTick    = false;',
+    '    this._tempo    = tempo;',
     '    // Audio state',
-    '    this._a        = p.initialA        !== undefined ? p.initialA        : 0.5;',
-    '    this._b        = p.initialB        !== undefined ? p.initialB        : 0.5;',
+    '    this._a         = p.initialA        !== undefined ? p.initialA        : 0.5;',
+    '    this._b         = p.initialB        !== undefined ? p.initialB        : 0.5;',
     '    this._feedback  = p.initialFeedback  !== undefined ? p.initialFeedback  : 0.9999;',
     '    this._bFeedback = p.initialBFeedback !== undefined ? p.initialBFeedback : 0.9999;',
     '    this._freq      = p.initialFreq      !== undefined ? p.initialFreq      : 350;',
@@ -77,22 +78,21 @@
     '    this._modI      = p.initialModI      !== undefined ? p.initialModI      : 650;',
     '    this._ph1 = 0;',
     '    this._ph2 = 0;',
-    '    this._tempo = tempo;',
     '    // Realtime-updatable params (mirror REALTIME_KEYS order in engine.js)',
-    '    this._sp1    = p.sparsity_1              !== undefined ? p.sparsity_1              : 0.4;',
-    '    this._sp2    = p.sparsity_2              !== undefined ? p.sparsity_2              : 0.5;',
-    '    this._maxTPB = p.maxTicksPerBeat         !== undefined ? p.maxTicksPerBeat         : 8;',
-    '    this._sf2    = p.slowFreq2               !== undefined ? p.slowFreq2               : 100;',
-    '    this._smi    = p.slowModI                !== undefined ? p.slowModI                : 1;',
+    '    this._sp1    = p.sparsity_1                !== undefined ? p.sparsity_1                : 0.4;',
+    '    this._sp2    = p.sparsity_2                !== undefined ? p.sparsity_2                : 0.5;',
+    '    this._maxTPB = p.maxTicksPerBeat           !== undefined ? p.maxTicksPerBeat           : 8;',
+    '    this._sf2    = p.slowFreq2                 !== undefined ? p.slowFreq2                 : 100;',
+    '    this._smi    = p.slowModI                  !== undefined ? p.slowModI                  : 1;',
     '    this._pfThr  = p.positiveFeedbackThreshold !== undefined ? p.positiveFeedbackThreshold : 0.75;',
-    '    this._pfVal  = p.positiveFeedbackValue   !== undefined ? p.positiveFeedbackValue   : 1.00001;',
-    '    this._dfVal  = p.decayFeedbackValue      !== undefined ? p.decayFeedbackValue      : 0.999;',
-    '    this._ffBase = p.fastFreqBase            !== undefined ? p.fastFreqBase            : 250;',
-    '    this._ffRng  = p.fastFreqRange           !== undefined ? p.fastFreqRange           : 350;',
-    '    this._fbBase = p.fastFeedbackBase        !== undefined ? p.fastFeedbackBase        : 0.999;',
-    '    this._fbRng  = p.fastFeedbackRange       !== undefined ? p.fastFeedbackRange       : 0.001;',
-    '    this._f2Rng  = p.fastFreq2Range          !== undefined ? p.fastFreq2Range          : 300;',
-    '    this._miRng  = p.fastModIRange           !== undefined ? p.fastModIRange           : 10000;',
+    '    this._pfVal  = p.positiveFeedbackValue     !== undefined ? p.positiveFeedbackValue     : 1.00001;',
+    '    this._dfVal  = p.decayFeedbackValue        !== undefined ? p.decayFeedbackValue        : 0.999;',
+    '    this._ffBase = p.fastFreqBase              !== undefined ? p.fastFreqBase              : 250;',
+    '    this._ffRng  = p.fastFreqRange             !== undefined ? p.fastFreqRange             : 350;',
+    '    this._fbBase = p.fastFeedbackBase          !== undefined ? p.fastFeedbackBase          : 0.999;',
+    '    this._fbRng  = p.fastFeedbackRange         !== undefined ? p.fastFeedbackRange         : 0.001;',
+    '    this._f2Rng  = p.fastFreq2Range            !== undefined ? p.fastFreq2Range            : 300;',
+    '    this._miRng  = p.fastModIRange             !== undefined ? p.fastModIRange             : 10000;',
     '    var self = this;',
     '    this.port.onmessage = function(e) {',
     '      if (e.data.type === "params") {',
@@ -112,26 +112,26 @@
     '    var sr = sampleRate;',
     '    var TWO_PI = 6.283185307179586;',
     '    for (var i = 0; i < out.length; i++) {',
-    '      // Tick clock C',
+    '      // Tick clock C (fast subdivisions)',
     '      this._cCounter++;',
     '      if (this._cCounter >= this._cPeriod) { this._cCounter = 0; this._cTick = true; }',
     '      else { this._cTick = false; }',
-    '      // Tick clock D',
+    '      // Tick clock D (slow beat)',
     '      this._dCounter++;',
     '      if (this._dCounter >= this._dPeriod) { this._dCounter = 0; this._dTick = true; }',
     '      else { this._dTick = false; }',
     '      // Slow event (one per beat)',
     '      if (this._dTick && Math.random() > this._sp1) {',
     '        var newTPB = Math.floor(1 + Math.random() * this._maxTPB);',
-    '        this._cPeriod = sr * 60 / (this._tempo * newTPB);',
-    '        this._a = 1.0; this._b = 1.0;',
+    '        this._cPeriod   = sr * 60 / (this._tempo * newTPB);',
+    '        this._a         = 1.0; this._b = 1.0;',
     '        this._bFeedback = Math.random() > this._pfThr ? this._pfVal : this._dfVal;',
-    '        this._freq2 = this._sf2; this._modI = this._smi;',
+    '        this._freq2     = this._sf2; this._modI = this._smi;',
     '      }',
     '      // Fast event (subdivision)',
     '      if (this._cTick && Math.random() > this._sp2 && !this._dTick) {',
     '        this._freq      = this._ffBase + Math.random() * this._ffRng;',
-    '        this._a = 1.0; this._b = 1.0;',
+    '        this._a         = 1.0; this._b = 1.0;',
     '        this._feedback  = this._fbBase + Math.random() * this._fbRng;',
     '        this._bFeedback = this._fbBase + Math.random() * this._fbRng;',
     '        this._freq2     = Math.random() * this._f2Rng;',
@@ -140,11 +140,9 @@
     '      // Envelope decay',
     '      this._a *= this._feedback;',
     '      this._b *= this._bFeedback;',
-    '      // FM synthesis (mirrors Maximilian sinewave phase accumulator)',
-    '      // modulator: output = sin(ph2), then increment',
+    '      // FM synthesis (phase accumulators)',
     '      var modOut = Math.sin(this._ph2);',
     '      this._ph2 += TWO_PI * this._freq2 / sr;',
-    '      // carrier: output = sin(ph1), then increment by instantaneous freq',
     '      var carOut = Math.sin(this._ph1);',
     '      this._ph1 += TWO_PI * (this._freq * this._b + modOut * this._modI) / sr;',
     '      out[i] = carOut * this._a;',
@@ -157,7 +155,8 @@
 
   // ── jazz-audio system ────────────────────────────────────────────────────────
   // Manages FM synthesis AudioWorklet + FFT texture + global jazzRMS / jazzRotDir.
-  // Place on <a-scene> as: jazz-audio="tempo: 75; sparsity_1: 0.6; ..."
+  // CRITICAL: AudioContext is only created inside the play button click handler
+  // (within a user gesture) to satisfy browser autoplay policy.
   AFRAME.registerSystem('jazz-audio', {
     schema: {
       tempo:                      { default: 90 },
@@ -189,13 +188,15 @@
       var self = this;
       var FFT_BINS = 256;
 
-      // FFT texture — created immediately, updated each tick once audio starts
-      this.fftArray   = new Float32Array(FFT_BINS);
+      // FFT texture — use RGBAFormat + Uint8Array (widely supported, avoids
+      // RedFormat/FloatType which may fail on some WebGL2 implementations)
+      this._fftData   = new Uint8Array(FFT_BINS * 4);
       this.fftTexture = new THREE.DataTexture(
-        this.fftArray, FFT_BINS, 1, THREE.RedFormat, THREE.FloatType
+        this._fftData, FFT_BINS, 1, THREE.RGBAFormat
       );
       this.fftTexture.magFilter = THREE.NearestFilter;
       this.fftTexture.minFilter = THREE.NearestFilter;
+      this.fftTexture.needsUpdate = true;
 
       // Expose globally so jazz-sphere (and others) can reference the texture
       window.jazzFFTTexture = this.fftTexture;
@@ -203,7 +204,6 @@
       window.jazzRotDir     = [1, 1, 1];
 
       this._playing       = false;
-      this._engineReady   = false;
       this._analyser      = null;
       this._floatFreqData = null;
       this._linArray      = new Float32Array(FFT_BINS);
@@ -211,11 +211,14 @@
       this._rmsSmooth     = 0;
       this._peakBaseline  = 0;
       this._eventCooldown = 0;
-      this._workletNode   = null;
-      this._gainNode      = null;
       this._ctx           = null;
+      this._workletNode   = null;
 
-      // Play button — show immediately as clickable; worklet loads in background
+      // Build worklet Blob URL (avoids CORS / SharedArrayBuffer requirements)
+      var blob    = new Blob([FM_WORKLET_SRC], { type: 'application/javascript' });
+      this._blobURL = URL.createObjectURL(blob);
+
+      // Play button — set text to 'play', enabled; no AudioContext yet
       var playBtn = document.getElementById('playButton');
       if (playBtn) {
         playBtn.textContent = 'play';
@@ -223,148 +226,134 @@
         this._playBtn = playBtn;
       }
 
-      // Build worklet Blob URL (avoids CORS / SharedArrayBuffer requirements)
-      var blob    = new Blob([FM_WORKLET_SRC], { type: 'application/javascript' });
-      var blobURL = URL.createObjectURL(blob);
-
-      // AudioContext starts suspended (browser autoplay policy).
-      // We don't call ctx.resume() until the user clicks play.
-      var ctx = new (window.AudioContext || window.webkitAudioContext)();
-      this._ctx = ctx;
-
-      ctx.audioWorklet.addModule(blobURL).then(function () {
-        var d = self.data;
-        var node = new AudioWorkletNode(ctx, 'jazz-fm', {
-          outputChannelCount: [1],
-          processorOptions: {
-            tempo:                      d.tempo,
-            ticksPerBeat:               d.ticksPerBeat,
-            sparsity_1:                 d.sparsity_1,
-            sparsity_2:                 d.sparsity_2,
-            maxTicksPerBeat:            d.maxTicksPerBeat,
-            slowFreq2:                  d.slowFreq2,
-            slowModI:                   d.slowModI,
-            positiveFeedbackThreshold:  d.positiveFeedbackThreshold,
-            positiveFeedbackValue:      d.positiveFeedbackValue,
-            decayFeedbackValue:         d.decayFeedbackValue,
-            fastFreqBase:               d.fastFreqBase,
-            fastFreqRange:              d.fastFreqRange,
-            fastFeedbackBase:           d.fastFeedbackBase,
-            fastFeedbackRange:          d.fastFeedbackRange,
-            fastFreq2Range:             d.fastFreq2Range,
-            fastModIRange:              d.fastModIRange,
-            initialA:                   d.initialA,
-            initialB:                   d.initialB,
-            initialFeedback:            d.initialFeedback,
-            initialBFeedback:           d.initialBFeedback,
-            initialFreq:                d.initialFreq,
-            initialFreq2:               d.initialFreq2,
-            initialModI:                d.initialModI
-          }
-        });
-        self._workletNode = node;
-        self._sampleRate  = ctx.sampleRate;
-
-        // Gain for master volume control
-        var gainNode = ctx.createGain();
-        gainNode.gain.value = 1.0;
-        self._gainNode = gainNode;
-
-        // Analyser for FFT
-        var analyser = ctx.createAnalyser();
-        analyser.fftSize = FFT_BINS * 2;
-        self._analyser      = analyser;
-        self._floatFreqData = new Float32Array(analyser.frequencyBinCount);
-
-        node.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        node.connect(analyser);
-
-        // Global helpers for volume and param updates
-        window.jazzSetVolume = function (v) {
-          gainNode.gain.value = Math.max(0, Math.min(1, v));
-        };
-        window.jazzSetAudioParams = function (params) {
-          if (!self._workletNode) return;
-          var d2 = self.data;
-          // Merge + send realtime keys in the same order as engine.js REALTIME_KEYS
-          var merged = Object.assign({}, d2, params);
-          self._workletNode.port.postMessage({ type: 'params', value: [
-            merged.sparsity_1, merged.sparsity_2, merged.maxTicksPerBeat,
-            merged.slowFreq2, merged.slowModI,
-            merged.positiveFeedbackThreshold, merged.positiveFeedbackValue,
-            merged.decayFeedbackValue,
-            merged.fastFreqBase, merged.fastFreqRange,
-            merged.fastFeedbackBase, merged.fastFeedbackRange,
-            merged.fastFreq2Range, merged.fastModIRange
-          ]});
-        };
-
-        self._engineReady = true;
-        // If the user already clicked play while the worklet was loading, start now
-        if (self._pendingPlay) {
-          self._pendingPlay = false;
-          ctx.resume();
-          self._playing = true;
-          if (playBtn) { playBtn.textContent = 'stop'; playBtn.disabled = false; }
-        } else {
-          if (playBtn) { playBtn.disabled = false; }
-        }
-      }).catch(function (err) {
-        console.error('jazz-audio: worklet failed to load', err);
-        if (playBtn) { playBtn.textContent = 'audio \u26a0'; playBtn.disabled = true; }
-      });
-
-      // Play / stop button
+      // Click handler: first click creates AudioContext (inside user gesture),
+      // loads worklet, then resumes. Subsequent clicks toggle stop/play.
       if (playBtn) {
         playBtn.addEventListener('click', function () {
           if (!self._playing) {
-            if (!self._engineReady) {
-              // Worklet still loading — queue the play and show feedback
+            // First play: create AudioContext inside user gesture
+            if (!self._ctx) {
+              var ctx;
+              try {
+                ctx = new (window.AudioContext || window.webkitAudioContext)();
+              } catch (e) {
+                console.error('jazz-audio: AudioContext creation failed', e);
+                playBtn.textContent = 'audio \u26a0';
+                playBtn.disabled = true;
+                return;
+              }
+              self._ctx = ctx;
+              self._sampleRate = ctx.sampleRate;
+
               playBtn.textContent = 'loading\u2026';
               playBtn.disabled = true;
-              self._pendingPlay = true;
-              return;
-            }
-            self._ctx.resume();
-            self._playing = true;
-            playBtn.textContent = 'stop';
-          } else {
-            self._ctx.suspend();
-            self._playing = false;
-            playBtn.textContent = 'play';
-          }
-        });
-      }
 
-      // Reset button
-      var resetBtn = document.getElementById('resetButton');
-      if (resetBtn) {
-        resetBtn.addEventListener('click', function () {
-          // Camera reset is handled by the scene or can be extended
-          var cameraEl = self.el.querySelector('[camera]');
-          if (cameraEl) {
-            var initPos = cameraEl.getAttribute('data-init-position');
-            if (initPos) cameraEl.setAttribute('position', initPos);
-            var lc = cameraEl.components['look-controls'];
-            if (lc) {
-              lc.yawObject.rotation.y   = 0;
-              lc.pitchObject.rotation.x = 0;
+              ctx.audioWorklet.addModule(self._blobURL).then(function () {
+                var d = self.data;
+                var node = new AudioWorkletNode(ctx, 'jazz-fm', {
+                  outputChannelCount: [1],
+                  processorOptions: {
+                    tempo:                      d.tempo,
+                    ticksPerBeat:               d.ticksPerBeat,
+                    sparsity_1:                 d.sparsity_1,
+                    sparsity_2:                 d.sparsity_2,
+                    maxTicksPerBeat:            d.maxTicksPerBeat,
+                    slowFreq2:                  d.slowFreq2,
+                    slowModI:                   d.slowModI,
+                    positiveFeedbackThreshold:  d.positiveFeedbackThreshold,
+                    positiveFeedbackValue:      d.positiveFeedbackValue,
+                    decayFeedbackValue:         d.decayFeedbackValue,
+                    fastFreqBase:               d.fastFreqBase,
+                    fastFreqRange:              d.fastFreqRange,
+                    fastFeedbackBase:           d.fastFeedbackBase,
+                    fastFeedbackRange:          d.fastFeedbackRange,
+                    fastFreq2Range:             d.fastFreq2Range,
+                    fastModIRange:              d.fastModIRange,
+                    initialA:                   d.initialA,
+                    initialB:                   d.initialB,
+                    initialFeedback:            d.initialFeedback,
+                    initialBFeedback:           d.initialBFeedback,
+                    initialFreq:                d.initialFreq,
+                    initialFreq2:               d.initialFreq2,
+                    initialModI:                d.initialModI
+                  }
+                });
+                self._workletNode = node;
+
+                // Gain for master volume control
+                var gainNode = ctx.createGain();
+                gainNode.gain.value = 1.0;
+                self._gainNode = gainNode;
+
+                // Analyser for FFT
+                var analyser = ctx.createAnalyser();
+                analyser.fftSize = FFT_BINS * 2;
+                self._analyser      = analyser;
+                self._floatFreqData = new Float32Array(analyser.frequencyBinCount);
+
+                node.connect(gainNode);
+                gainNode.connect(ctx.destination);
+                node.connect(analyser);
+
+                // Global helpers
+                window.jazzSetVolume = function (v) {
+                  gainNode.gain.value = Math.max(0, Math.min(1, v));
+                };
+                window.jazzSetAudioParams = function (params) {
+                  if (!self._workletNode) return;
+                  var d2 = self.data;
+                  var merged = Object.assign({}, d2, params);
+                  self._workletNode.port.postMessage({ type: 'params', value: [
+                    merged.sparsity_1, merged.sparsity_2, merged.maxTicksPerBeat,
+                    merged.slowFreq2, merged.slowModI,
+                    merged.positiveFeedbackThreshold, merged.positiveFeedbackValue,
+                    merged.decayFeedbackValue,
+                    merged.fastFreqBase, merged.fastFreqRange,
+                    merged.fastFeedbackBase, merged.fastFeedbackRange,
+                    merged.fastFreq2Range, merged.fastModIRange
+                  ]});
+                };
+
+                ctx.resume().then(function () {
+                  self._playing = true;
+                  playBtn.textContent = 'stop';
+                  playBtn.disabled = false;
+                });
+              }).catch(function (err) {
+                console.error('jazz-audio: worklet failed to load', err);
+                playBtn.textContent = 'audio \u26a0';
+                playBtn.disabled = false;
+              });
+
+            } else {
+              // AudioContext already exists — just resume
+              self._ctx.resume().then(function () {
+                self._playing = true;
+                playBtn.textContent = 'stop';
+              });
             }
+          } else {
+            // Stop
+            self._ctx.suspend().then(function () {
+              self._playing = false;
+              playBtn.textContent = 'play';
+            });
           }
         });
       }
     },
 
     tick: function (time, dt) {
+      // Only update FFT data if analyser exists
       if (!this._analyser) return;
-      var FFT_BINS     = 256;
-      var analyser     = this._analyser;
+
+      var FFT_BINS      = 256;
+      var analyser      = this._analyser;
       var floatFreqData = this._floatFreqData;
-      var linArray     = this._linArray;
-      var fftArray     = this.fftArray;
-      var sampleRate   = this._sampleRate;
-      var dtSec        = dt / 1000;
+      var linArray      = this._linArray;
+      var fftData       = this._fftData;
+      var sampleRate    = this._sampleRate;
+      var dtSec         = dt / 1000;
 
       // dB → linear amplitude
       analyser.getFloatFrequencyData(floatFreqData);
@@ -392,7 +381,7 @@
         this._eventCooldown = 0.4;
       }
 
-      // Log-frequency remap into texture (same logic as engine.js)
+      // Log-frequency remap into RGBA texture (R channel carries value, 0–255)
       if (peak > 0.002) {
         var logMin = Math.log2(20);
         var logMax = Math.log2(8000);
@@ -401,10 +390,19 @@
           var t      = k / (FFT_BINS - 1);
           var freq   = Math.pow(2, logMin + t * (logMax - logMin));
           var binIdx = Math.min(Math.floor(freq * FFT_BINS * 2 / sampleRate), FFT_BINS - 1);
-          fftArray[k] = linArray[binIdx] * inv;
+          var val    = Math.min(255, Math.floor(linArray[binIdx] * inv * 255));
+          fftData[k * 4]     = val;
+          fftData[k * 4 + 1] = val;
+          fftData[k * 4 + 2] = val;
+          fftData[k * 4 + 3] = 255;
         }
       } else {
-        for (var k = 0; k < FFT_BINS; k++) fftArray[k] = 0;
+        for (var k = 0; k < FFT_BINS; k++) {
+          fftData[k * 4]     = 0;
+          fftData[k * 4 + 1] = 0;
+          fftData[k * 4 + 2] = 0;
+          fftData[k * 4 + 3] = 255;
+        }
       }
 
       this.fftTexture.needsUpdate = true;
@@ -413,7 +411,7 @@
 
   // ── jazz-trails system ───────────────────────────────────────────────────────
   // Persistence / motion-trail effect. Place on <a-scene> as:
-  // jazz-trails="opacity: 0.08"
+  //   jazz-trails="opacity: 0.08"
   // The renderer must have preserveDrawingBuffer:true (set via a-scene renderer attr).
   AFRAME.registerSystem('jazz-trails', {
     schema: {
@@ -422,6 +420,7 @@
 
     init: function () {
       var self = this;
+
       // Defer setup until renderer is confirmed ready
       this.el.addEventListener('renderstart', function () {
         var sceneEl  = self.el;
@@ -432,24 +431,25 @@
 
         // Full-screen dark quad rendered each frame before the scene
         var fadeScene = new THREE.Scene();
-        self.fadeMat  = new THREE.MeshBasicMaterial({
+        self._fadeMat = new THREE.MeshBasicMaterial({
           color: 0x000000, transparent: true, opacity: self.data.opacity,
           depthTest: false, depthWrite: false
         });
-        fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), self.fadeMat));
-        var fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-        // Override sceneEl.render so our fade quad runs right before the scene draw.
-        // This is more reliable than tick() because it fires in the render phase, not
-        // the tick phase, so Three.js renderer state is already set up correctly.
-        var origRender = sceneEl.render.bind(sceneEl);
-        sceneEl.render = function (time, timeDelta) {
-          sceneEl.object3D.background = null; // prevent Three.js force-clear
-          renderer.clearDepth();
-          renderer.render(fadeScene, fadeCamera);
-          origRender(time, timeDelta);
-        };
+        fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), self._fadeMat));
+        self._fadeScene  = fadeScene;
+        self._fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        self._ready      = true;
       });
+    },
+
+    // tick() runs BEFORE A-Frame renders the scene each frame
+    tick: function () {
+      if (!this._ready) return;
+      var sceneEl  = this.el;
+      var renderer = sceneEl.renderer;
+      sceneEl.object3D.background = null; // prevent Three.js force-clear
+      renderer.clearDepth();
+      renderer.render(this._fadeScene, this._fadeCamera);
     }
   });
 
@@ -467,54 +467,68 @@
     },
 
     init: function () {
-      // Wait for jazz-audio to expose the FFT texture (it's set in system init)
-      var fftTex = window.jazzFFTTexture;
-      if (!fftTex) {
-        // Fallback: 1-pixel black texture until audio system init runs
-        var arr = new Float32Array(1);
-        fftTex = new THREE.DataTexture(arr, 1, 1, THREE.RedFormat, THREE.FloatType);
+      console.log('jazz-sphere: init start');
+      try {
+        // Create a fallback DataTexture using RGBAFormat + Uint8Array (256*4 zeros)
+        // Do NOT use window.jazzFFTTexture yet — audio system may init after this
+        var fallbackData = new Uint8Array(256 * 4);
+        // Set alpha channel to 255 so texture is valid
+        for (var i = 3; i < fallbackData.length; i += 4) fallbackData[i] = 255;
+        var fftTex = new THREE.DataTexture(
+          fallbackData, 256, 1, THREE.RGBAFormat
+        );
+        fftTex.magFilter = THREE.NearestFilter;
+        fftTex.minFilter = THREE.NearestFilter;
         fftTex.needsUpdate = true;
+
+        var d   = this.data;
+        var geo = addBarycentricCoords(
+          new THREE.SphereGeometry(d.radius, d.segments, d.segments)
+        );
+
+        // Do NOT set glslVersion — let Three.js auto-handle GLSL version for WebGL2
+        var mat = new THREE.ShaderMaterial({
+          vertexShader:   JAZZ_VERT,
+          fragmentShader: JAZZ_FRAG,
+          uniforms: {
+            uFFT:       { value: fftTex },
+            uDeform:    { value: d.deform },
+            uTime:      { value: 0.0 },
+            uLineWidth: { value: d.lineWidth },
+            uColor:     { value: new THREE.Color(d.color) },
+            uFFTUV:     { value: d.fftUV }
+          },
+          transparent: true,
+          depthWrite:  false,
+          side:        THREE.DoubleSide
+        });
+
+        this.mesh = new THREE.Mesh(geo, mat);
+        this._mat = mat;
+        this.el.setObject3D('mesh', this.mesh);
+
+        console.log('jazz-sphere: mesh added to scene');
+      } catch (e) {
+        console.error('jazz-sphere: init error', e);
       }
-
-      var d   = this.data;
-      var geo = addBarycentricCoords(
-        new THREE.SphereGeometry(d.radius, d.segments, d.segments)
-      );
-      var mat = new THREE.ShaderMaterial({
-        vertexShader:   JAZZ_VERT,
-        fragmentShader: JAZZ_FRAG,
-        uniforms: {
-          uFFT:       { value: fftTex },
-          uDeform:    { value: d.deform },
-          uTime:      { value: 0.0 },
-          uLineWidth: { value: d.lineWidth },
-          uColor:     { value: new THREE.Color(d.color) },
-          uFFTUV:     { value: d.fftUV }
-        },
-        glslVersion: THREE.GLSL1,       // force GLSL 1.00 — matches engine.js behaviour
-        extensions:  { derivatives: true },
-        transparent: true,
-        depthWrite:  false
-      });
-
-      this.mesh = new THREE.Mesh(geo, mat);
-      this.el.setObject3D('mesh', this.mesh);
-      this._mat = mat;
     },
 
     tick: function (time, dtMs) {
+      if (!this._mat) return;
+
       var dt  = dtMs / 1000;
       var t   = time / 1000;
       var mat = this._mat;
 
+      // Update time uniform
       mat.uniforms.uTime.value = t;
 
-      // Check if FFT texture has been populated by the audio system
+      // Check if FFT texture has been populated by the audio system; swap in
       if (window.jazzFFTTexture && mat.uniforms.uFFT.value !== window.jazzFFTTexture) {
         mat.uniforms.uFFT.value = window.jazzFFTTexture;
       }
 
-      // Rotation driven by RMS amplitude and event direction
+      // Rotate mesh slowly, driven by RMS amplitude and event direction
       var rms      = window.jazzRMS    || 0;
       var rotDir   = window.jazzRotDir || [1, 1, 1];
       var rotSpeed = 0.05 + rms * 0.4;
