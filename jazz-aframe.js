@@ -215,25 +215,22 @@
       this._gainNode      = null;
       this._ctx           = null;
 
-      // Wire up play button
+      // Play button — show immediately as clickable; worklet loads in background
       var playBtn = document.getElementById('playButton');
       if (playBtn) {
-        playBtn.textContent = 'loading\u2026';
-        playBtn.disabled = true;
+        playBtn.textContent = 'play';
+        playBtn.disabled = false;
         this._playBtn = playBtn;
       }
-
-      // 20-second timeout — if worklet hangs, offer reload
-      var timer = setTimeout(function () { self._audioFailed(); }, 20000);
 
       // Build worklet Blob URL (avoids CORS / SharedArrayBuffer requirements)
       var blob    = new Blob([FM_WORKLET_SRC], { type: 'application/javascript' });
       var blobURL = URL.createObjectURL(blob);
 
+      // AudioContext starts suspended (browser autoplay policy).
+      // We don't call ctx.resume() until the user clicks play.
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       this._ctx = ctx;
-      // Keep suspended until play is clicked
-      ctx.suspend();
 
       ctx.audioWorklet.addModule(blobURL).then(function () {
         var d = self.data;
@@ -303,23 +300,32 @@
           ]});
         };
 
-        clearTimeout(timer);
         self._engineReady = true;
-        if (playBtn) {
-          playBtn.textContent = 'play';
-          playBtn.disabled = false;
+        // If the user already clicked play while the worklet was loading, start now
+        if (self._pendingPlay) {
+          self._pendingPlay = false;
+          ctx.resume();
+          self._playing = true;
+          if (playBtn) { playBtn.textContent = 'stop'; playBtn.disabled = false; }
+        } else {
+          if (playBtn) { playBtn.disabled = false; }
         }
       }).catch(function (err) {
         console.error('jazz-audio: worklet failed to load', err);
-        clearTimeout(timer);
-        self._audioFailed();
+        if (playBtn) { playBtn.textContent = 'audio \u26a0'; playBtn.disabled = true; }
       });
 
       // Play / stop button
       if (playBtn) {
         playBtn.addEventListener('click', function () {
           if (!self._playing) {
-            if (!self._engineReady) return;
+            if (!self._engineReady) {
+              // Worklet still loading — queue the play and show feedback
+              playBtn.textContent = 'loading\u2026';
+              playBtn.disabled = true;
+              self._pendingPlay = true;
+              return;
+            }
             self._ctx.resume();
             self._playing = true;
             playBtn.textContent = 'stop';
@@ -348,17 +354,6 @@
           }
         });
       }
-    },
-
-    _audioFailed: function () {
-      var playBtn = this._playBtn;
-      if (!playBtn) return;
-      playBtn.textContent = 'reload \u21ba';
-      playBtn.disabled = false;
-      playBtn.addEventListener('click', function onReload() {
-        playBtn.removeEventListener('click', onReload);
-        window.location.reload();
-      });
     },
 
     tick: function (time, dt) {
@@ -426,31 +421,35 @@
     },
 
     init: function () {
-      var renderer = this.el.renderer;
-      // Disable auto-clear so the colour buffer persists between frames
-      renderer.autoClear = false;
+      var self = this;
+      // Defer setup until renderer is confirmed ready
+      this.el.addEventListener('renderstart', function () {
+        var sceneEl  = self.el;
+        var renderer = sceneEl.renderer;
 
-      // Full-screen dark quad rendered each frame before the scene
-      this.fadeScene = new THREE.Scene();
-      this.fadeMat   = new THREE.MeshBasicMaterial({
-        color: 0x000000, transparent: true, opacity: this.data.opacity,
-        depthTest: false, depthWrite: false
+        // Disable auto-clear so the colour buffer persists between frames
+        renderer.autoClear = false;
+
+        // Full-screen dark quad rendered each frame before the scene
+        var fadeScene = new THREE.Scene();
+        self.fadeMat  = new THREE.MeshBasicMaterial({
+          color: 0x000000, transparent: true, opacity: self.data.opacity,
+          depthTest: false, depthWrite: false
+        });
+        fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), self.fadeMat));
+        var fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+        // Override sceneEl.render so our fade quad runs right before the scene draw.
+        // This is more reliable than tick() because it fires in the render phase, not
+        // the tick phase, so Three.js renderer state is already set up correctly.
+        var origRender = sceneEl.render.bind(sceneEl);
+        sceneEl.render = function (time, timeDelta) {
+          sceneEl.object3D.background = null; // prevent Three.js force-clear
+          renderer.clearDepth();
+          renderer.render(fadeScene, fadeCamera);
+          origRender(time, timeDelta);
+        };
       });
-      this.fadeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.fadeMat));
-      this.fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    },
-
-    tick: function () {
-      // Null scene.background every tick — if it's a Color, Three.js sets
-      // forceClear=true which overrides autoClear=false and destroys the trail.
-      this.el.object3D.background = null;
-
-      var renderer = this.el.renderer;
-      // Clear only the depth buffer, preserving the colour (trail) buffer
-      renderer.clearDepth();
-      // Darken existing content slightly — creates the persistence effect
-      renderer.render(this.fadeScene, this.fadeCamera);
-      // A-Frame renders the main scene after all ticks complete
     }
   });
 
@@ -492,6 +491,7 @@
           uColor:     { value: new THREE.Color(d.color) },
           uFFTUV:     { value: d.fftUV }
         },
+        glslVersion: THREE.GLSL1,       // force GLSL 1.00 — matches engine.js behaviour
         extensions:  { derivatives: true },
         transparent: true,
         depthWrite:  false
