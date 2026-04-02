@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>A-Frame test</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    body { margin: 0; background: #000; }
+    #info { position: absolute; top: 8px; left: 8px; color: #fff; font-family: monospace; font-size: 13px; z-index: 10; }
+  </style>
+</head>
+<body>
+  <div id="info">If A-Frame works you should see a red box and a white sphere below.</div>
+  <a-scene vr-mode-ui="enabled: false">
+    <a-box color="#ff2222" position="-1 0 -3" rotation="0 45 0"></a-box>
+    <a-sphere color="#ffffff" radius="0.5" position="1 0 -3"></a-sphere>
+    <a-sky color="#111111"></a-sky>
+    <a-entity camera look-controls position="0 0 0"></a-entity>
+  </a-scene>
+  <script>
+    document.querySelector('a-scene').addEventListener('loaded', function() {
+      document.getElementById('info').textContent = 'A-Frame loaded OK — you should see a red box and white sphere.';
+    });
+  </script>
+</body>
+</html>
