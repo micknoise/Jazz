@@ -492,6 +492,7 @@
           uColor:     { value: new THREE.Color(d.color) },
           uFFTUV:     { value: d.fftUV }
         },
+        extensions:  { derivatives: true },
         transparent: true,
         depthWrite:  false
       });
