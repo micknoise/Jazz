@@ -62,15 +62,45 @@ tex.needsUpdate  = true;
 
 ---
 
-## Converting Maximilian DSP to a native AudioWorklet
+## Audio: keep Maximilian if you can
 
-Maximilian's DSP runs in an AudioWorklet via a WASM binary. Replace it with a pure JS
-AudioWorklet that replicates the same FM synthesis logic. Store the worklet code as a
-string and load it via a Blob URL — no CORS or SharedArrayBuffer needed.
+**Do not rewrite Maximilian DSP in JS unless you have a specific reason.**
 
-### Maximilian concepts → Web Audio equivalents
+Maximilian runs in WASM compiled from C++. Its oscillators use lookup tables rather than
+`Math.sin()`, and the entire DSP loop avoids GC pressure and JS JIT unpredictability.
+A JS reimplementation is not faster and introduces subtle differences (e.g. exact sample
+timing of clock ticks). `maxiClock` in particular is so simple (a counter comparison)
+that a JS rewrite is pure downside — more code, same behaviour, less tested.
 
-| Maximilian | Web Audio equivalent |
+### When Maximilian DOES need replacing
+
+Only replace it if the **loading mechanism** is broken, not the DSP itself. Known loading
+problems in this project and their fixes:
+
+1. **Livereload script injected into `libs/index.mjs`** — GitHub Pages dev server appended
+   a livereload line at the top of the file. Fix: `sed -i '1d' libs/index.mjs` (may need
+   to run twice if it left a blank line).
+
+2. **Wrong URL for libs path** — `document.location.origin + '/libs'` gives the server
+   root, not the page-relative path. Fix:
+   ```javascript
+   initAudioEngine(new URL('./libs', document.location.href).href)
+   ```
+
+3. **COOP/COEP headers required for SharedArrayBuffer** — Maximilian uses SharedArrayBuffer
+   for the WASM memory. The `enable-threads.js` service worker adds the required headers.
+   This works on GitHub Pages. If you are in an environment where service workers are
+   unavailable and you cannot set server headers, then replacing Maximilian becomes necessary.
+
+### If you must replace Maximilian: native AudioWorklet
+
+Only in the case where Maximilian cannot load (e.g. no service worker support, no ability
+to set COOP/COEP headers), replace it with a pure JS AudioWorklet loaded via Blob URL.
+
+The Maximilian DSP concepts map directly to JS equivalents — note that `maxiClock` is
+already just a counter, so the translation is exact:
+
+| Maximilian | JS AudioWorklet equivalent |
 |---|---|
 | `maxiOsc.sinewave(freq)` | Phase accumulator: `out = sin(phase); phase += 2π * freq / sampleRate` |
 | `maxiClock.setTempo(bpm)` | Period in samples: `period = sampleRate * 60 / bpm` |
