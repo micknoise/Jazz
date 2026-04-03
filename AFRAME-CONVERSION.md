@@ -1,400 +1,247 @@
-# Converting Jazz Maximilian + Three.js to A-Frame Components
+# Converting a Jazz variation to A-Frame
 
-A guide for converting a Jazz variation (engine.js + Maximilian audio + Three.js visuals)
-into a declarative A-Frame page with self-contained components.
-
----
-
-## Project context
-
-The Jazz project (`micknoise/Jazz`) has variations structured as:
-- `engine.js` — shared Three.js renderer, trail effect, camera controls, audio wiring
-- `vNN.html` — each variation calls `initJazzEngine({...})` with a `sceneSetup` callback
-- Audio uses **Maximilian** (WASM via AudioWorklet + SharedArrayBuffer), which requires
-  COOP/COEP headers and a service worker (`enable-threads.js`)
-- Visuals use a custom **barycentric wireframe** ShaderMaterial with FFT-driven deformation
-
-The goal is a version where the same experience is configured entirely through HTML attributes
-on `<a-scene>` and `<a-entity>` tags, removing the JS-heavy `initJazzEngine` call.
+This guide is for converting a Jazz variation (Three.js + Maximilian + engine.js)
+into an A-Frame component. Read it before touching any code.
 
 ---
 
-## Environment constraints (critical)
+## The key rule: do not rewrite the Maximilian DSP
 
-### 1. Host A-Frame locally — do not use a CDN
+The audio in every Jazz variation runs on Maximilian, a C++ DSP library compiled
+to WASM. The DSP code that drives it is already correct. **Do not rewrite it in
+plain JavaScript.** The WASM runtime is faster, and the clock and oscillator
+behaviour is different in subtle ways. The only safe path is to keep Maximilian
+and wire it up the same way engine.js does.
 
-External CDN requests are blocked in this environment. Download A-Frame via npm and commit it:
+---
+
+## What actually changes between Three.js and A-Frame
+
+Nothing about audio changes. You are only changing how the visual scene is set up
+and updated.
+
+| Three.js (engine.js)                         | A-Frame equivalent                           |
+|----------------------------------------------|----------------------------------------------|
+| `initJazzEngine({ ... })`                    | `<a-scene jazz-audio="..." jazz-trails="...">` |
+| `sceneSetup(scene, camera, ss)` callback     | `AFRAME.registerComponent('jazz-xxx', {...})` |
+| `update(fftArray, elapsed, dt)` callback     | component `tick(time, dtMs)`                 |
+| `camera: { position, lookAt }`               | `<a-entity camera="userHeight:0" position="...">` |
+
+Everything else — geometry creation, ShaderMaterial, uniforms — is identical
+Three.js code moved into `init()` and `tick()`.
+
+---
+
+## HTML boilerplate
+
+Load scripts in this exact order. **All four are required.**
+
+```html
+<script src="./enable-threads.js"></script>      <!-- SharedArrayBuffer polyfill via service worker -->
+<script src="./maximilian.v.0.1.js"></script>    <!-- Maximilian WASM + initAudioEngine() -->
+<script src="./aframe.min.js"></script>           <!-- A-Frame (must be local, CDN may be blocked) -->
+<script src="./jazz-aframe.js"></script>          <!-- Jazz components -->
+```
+
+`enable-threads.js` registers a service worker that sets COOP/COEP headers.
+Without it, SharedArrayBuffer is unavailable and Maximilian silently fails.
+It must come first.
+
+`maximilian.v.0.1.js` must come before `aframe.min.js` because it patches
+`document.location` before A-Frame reads it.
+
+Do **not** use a CDN URL for `aframe.min.js` — CDN requests may be blocked.
+Get a local copy:
 
 ```bash
 cd /tmp && npm pack aframe@1.5.0
 tar xzf aframe-1.5.0.tgz package/dist/aframe-v1.5.0.min.js
-cp package/dist/aframe-v1.5.0.min.js /path/to/repo/aframe.min.js
-```
-
-Then load it as `<script src="./aframe.min.js"></script>`.
-
-### 2. A-Frame uses WebGL2 with Three.js r155 (bundled)
-
-A-Frame's internal Three.js version differs from the standalone r160 used by engine.js.
-The bundled Three.js uses WebGL2 by default. ShaderMaterial GLSL is auto-converted:
-- `attribute` → `in`, `varying` → `in`/`out`, `texture2D` → `texture`, `gl_FragColor` → output alias
-- Do NOT set `glslVersion` on ShaderMaterial — let Three.js handle this automatically
-- `fwidth()` works without `OES_standard_derivatives` in WebGL2
-
-### 3. DataTexture format
-
-Use `THREE.RGBAFormat` with `Uint8Array` for FFT data textures:
-
-```javascript
-var data = new Uint8Array(FFT_BINS * 4);
-var tex  = new THREE.DataTexture(data, FFT_BINS, 1, THREE.RGBAFormat);
-```
-
-Do NOT use `THREE.RedFormat + THREE.FloatType` — this has inconsistent support across
-WebGL2 implementations and will silently produce a broken texture.
-
-The shader reads `.r` channel (0.0–1.0 normalized from 0–255). When writing FFT data:
-```javascript
-data[k * 4]     = Math.min(255, Math.floor(value * 255)); // R
-data[k * 4 + 3] = 255; // A must be 255 or texture is invalid
-tex.needsUpdate  = true;
+cp package/dist/aframe-v1.5.0.min.js /path/to/project/aframe.min.js
 ```
 
 ---
 
-## Audio: keep Maximilian if you can
+## jazz-audio system — how to wire up Maximilian
 
-**Do not rewrite Maximilian DSP in JS unless you have a specific reason.**
+Copy the `jazz-audio` system from `jazz-aframe.js` unchanged. It is a direct
+port of the engine.js audio wiring. The key points:
 
-Maximilian runs in WASM compiled from C++. Its oscillators use lookup tables rather than
-`Math.sin()`, and the entire DSP loop avoids GC pressure and JS JIT unpredictability.
-A JS reimplementation is not faster and introduces subtle differences (e.g. exact sample
-timing of clock ticks). `maxiClock` in particular is so simple (a counter comparison)
-that a JS rewrite is pure downside — more code, same behaviour, less tested.
+**1. `initAudioEngine` takes a page-relative path, not an origin-relative one.**
 
-### When Maximilian DOES need replacing
+```js
+// CORRECT — works in subdirectories
+initAudioEngine(new URL('./libs', document.location.href).href)
 
-Only replace it if the **loading mechanism** is broken, not the DSP itself. Known loading
-problems in this project and their fixes:
-
-1. **Livereload script injected into `libs/index.mjs`** — GitHub Pages dev server appended
-   a livereload line at the top of the file. Fix: `sed -i '1d' libs/index.mjs` (may need
-   to run twice if it left a blank line).
-
-2. **Wrong URL for libs path** — `document.location.origin + '/libs'` gives the server
-   root, not the page-relative path. Fix:
-   ```javascript
-   initAudioEngine(new URL('./libs', document.location.href).href)
-   ```
-
-3. **COOP/COEP headers required for SharedArrayBuffer** — Maximilian uses SharedArrayBuffer
-   for the WASM memory. The `enable-threads.js` service worker adds the required headers.
-   This works on GitHub Pages. If you are in an environment where service workers are
-   unavailable and you cannot set server headers, then replacing Maximilian becomes necessary.
-
-### If you must replace Maximilian: native AudioWorklet
-
-Only in the case where Maximilian cannot load (e.g. no service worker support, no ability
-to set COOP/COEP headers), replace it with a pure JS AudioWorklet loaded via Blob URL.
-
-The Maximilian DSP concepts map directly to JS equivalents — note that `maxiClock` is
-already just a counter, so the translation is exact:
-
-| Maximilian | JS AudioWorklet equivalent |
-|---|---|
-| `maxiOsc.sinewave(freq)` | Phase accumulator: `out = sin(phase); phase += 2π * freq / sampleRate` |
-| `maxiClock.setTempo(bpm)` | Period in samples: `period = sampleRate * 60 / bpm` |
-| `maxiClock.setTicksPerBeat(n)` | Fast clock period: `period = sampleRate * 60 / (bpm * n)` |
-| `maxiClock.ticker()` | Increment counter each sample, fire when counter ≥ period |
-| `maxiClock.tick` | Boolean: true for ONE sample when clock fires |
-| `paramsIn.getValue()` | `this.port.onmessage` receiving `{ type: 'params', value: [...] }` |
-
-### The FM synthesis pattern from engine.js
-
-The `buildDSPCode()` function in engine.js generates this Maximilian DSP loop:
-
-```javascript
-// Two clocks:
-//   d = slow (one tick per beat at `tempo` BPM)
-//   c = fast (multiple ticks per beat, subdivision randomised on each slow event)
-c.ticker(); d.ticker();
-
-// Slow event: reset envelopes, set modulator to slow mode
-if (d.tick && Math.random() > sparsity_1) {
-  c.setTicksPerBeat(Math.floor(1 + Math.random() * maxTicksPerBeat));
-  _a = 1.0; _b = 1.0;
-  _bFeedback = Math.random() > positiveFeedbackThreshold
-    ? positiveFeedbackValue   // amplitude grows
-    : decayFeedbackValue;     // amplitude decays
-  _freq2 = slowFreq2; _modI = slowModI;
-}
-
-// Fast event: randomise carrier freq, feedback, modulator
-if (c.tick && Math.random() > sparsity_2 && !d.tick) {
-  _freq      = fastFreqBase + Math.random() * fastFreqRange;
-  _a = 1.0; _b = 1.0;
-  _feedback  = fastFeedbackBase + Math.random() * fastFeedbackRange;
-  _bFeedback = fastFeedbackBase + Math.random() * fastFeedbackRange;
-  _freq2     = Math.random() * fastFreq2Range;
-  _modI      = Math.random() * fastModIRange;
-}
-
-// Per-sample envelope decay
-_a *= _feedback; _b *= _bFeedback;
-
-// FM synthesis: carrier frequency modulated by modulator output * modulation index
-// Maximilian's sinewave(freq) = returns sin(phase), THEN increments phase
-// Replicate this exactly with phase accumulators:
-var modOut = sin(ph2); ph2 += 2π * _freq2 / sampleRate;
-var carOut = sin(ph1); ph1 += 2π * (_freq * _b + modOut * _modI) / sampleRate;
-output = carOut * _a;
+// WRONG — drops everything after the last slash
+initAudioEngine(document.location.origin + '/libs')
 ```
 
-### Native AudioWorklet template
+**2. `buildDSPCode(p)` generates the Maximilian JS string. Copy it exactly from
+engine.js.** Do not simplify or rewrite it. The `maxiClock`, `maxiOsc`, and
+feedback logic are there for a reason.
 
-```javascript
-var FM_WORKLET_SRC = `
-class JazzFMProcessor extends AudioWorkletProcessor {
-  constructor(options) {
-    super();
-    var p = options.processorOptions || {};
-    var sr = sampleRate;
-    var tempo = p.tempo || 90;
-    var tpb   = p.ticksPerBeat || 4;
+**3. `maxi.play()` must be called synchronously inside a click handler** — not
+in a Promise `.then()`, not in `setTimeout`. The browser only unlocks
+`AudioContext` if `resume()` (which `play()` calls) happens in the same
+synchronous call stack as the user gesture.
 
-    // Clock state
-    this._cCounter = 0; this._cPeriod = sr * 60 / (tempo * tpb); this._cTick = false;
-    this._dCounter = 0; this._dPeriod = sr * 60 / tempo;          this._dTick = false;
-    this._tempo = tempo;
-
-    // Audio state (initial values from processorOptions)
-    this._a = p.initialA || 0.5;           this._b = p.initialB || 0.5;
-    this._feedback  = p.initialFeedback  || 0.9999;
-    this._bFeedback = p.initialBFeedback || 0.9999;
-    this._freq  = p.initialFreq  || 350;  this._freq2 = p.initialFreq2 || 50;
-    this._modI  = p.initialModI  || 650;
-    this._ph1 = 0; this._ph2 = 0;
-
-    // Realtime params (matching REALTIME_KEYS order from engine.js)
-    this._sp1 = p.sparsity_1 || 0.4;  this._sp2 = p.sparsity_2 || 0.5;
-    this._maxTPB = p.maxTicksPerBeat || 8;
-    this._sf2 = p.slowFreq2 || 100;   this._smi = p.slowModI || 1;
-    this._pfThr = p.positiveFeedbackThreshold || 0.75;
-    this._pfVal = p.positiveFeedbackValue || 1.00001;
-    this._dfVal = p.decayFeedbackValue || 0.999;
-    this._ffBase = p.fastFreqBase || 250;    this._ffRng = p.fastFreqRange || 350;
-    this._fbBase = p.fastFeedbackBase || 0.999; this._fbRng = p.fastFeedbackRange || 0.001;
-    this._f2Rng = p.fastFreq2Range || 300;   this._miRng = p.fastModIRange || 10000;
-
-    var self = this;
-    this.port.onmessage = function(e) {
-      if (e.data.type !== 'params') return;
-      var a = e.data.value;  // array in REALTIME_KEYS order
-      self._sp1=a[0]; self._sp2=a[1]; self._maxTPB=a[2];
-      self._sf2=a[3]; self._smi=a[4];
-      self._pfThr=a[5]; self._pfVal=a[6]; self._dfVal=a[7];
-      self._ffBase=a[8]; self._ffRng=a[9];
-      self._fbBase=a[10]; self._fbRng=a[11];
-      self._f2Rng=a[12]; self._miRng=a[13];
-    };
-  }
-
-  process(inputs, outputs) {
-    var out = outputs[0] && outputs[0][0];
-    if (!out) return true;
-    var sr = sampleRate, PI2 = 6.283185307179586;
-    for (var i = 0; i < out.length; i++) {
-      // Tick clocks
-      if (++this._cCounter >= this._cPeriod) { this._cCounter=0; this._cTick=true; }
-      else this._cTick = false;
-      if (++this._dCounter >= this._dPeriod) { this._dCounter=0; this._dTick=true; }
-      else this._dTick = false;
-
-      // Slow event
-      if (this._dTick && Math.random() > this._sp1) {
-        this._cPeriod = sr * 60 / (this._tempo * Math.floor(1 + Math.random() * this._maxTPB));
-        this._a = 1; this._b = 1;
-        this._bFeedback = Math.random() > this._pfThr ? this._pfVal : this._dfVal;
-        this._freq2 = this._sf2; this._modI = this._smi;
-      }
-      // Fast event
-      if (this._cTick && Math.random() > this._sp2 && !this._dTick) {
-        this._freq = this._ffBase + Math.random() * this._ffRng;
-        this._a = 1; this._b = 1;
-        this._feedback  = this._fbBase + Math.random() * this._fbRng;
-        this._bFeedback = this._fbBase + Math.random() * this._fbRng;
-        this._freq2 = Math.random() * this._f2Rng;
-        this._modI  = Math.random() * this._miRng;
-      }
-      this._a *= this._feedback; this._b *= this._bFeedback;
-
-      // FM: phase accumulator pattern matching Maximilian sinewave()
-      var modOut = Math.sin(this._ph2); this._ph2 += PI2 * this._freq2 / sr;
-      var carOut = Math.sin(this._ph1); this._ph1 += PI2 * (this._freq * this._b + modOut * this._modI) / sr;
-      out[i] = carOut * this._a;
-    }
-    return true;
-  }
-}
-registerProcessor('jazz-fm', JazzFMProcessor);
-`;
-```
-
-Load it via Blob URL in the play button click handler (MUST be inside a user gesture):
-
-```javascript
+```js
 playBtn.addEventListener('click', function() {
-  var ctx = new AudioContext();
-  var blob = new Blob([FM_WORKLET_SRC], { type: 'application/javascript' });
-  ctx.audioWorklet.addModule(URL.createObjectURL(blob)).then(function() {
-    var node = new AudioWorkletNode(ctx, 'jazz-fm', {
-      outputChannelCount: [1],
-      processorOptions: { tempo: 75, sparsity_1: 0.6, /* ... */ }
-    });
-    node.connect(ctx.destination);
-    ctx.resume();
-  });
-});
-```
-
-**Critical**: Do NOT create `AudioContext` outside a user gesture (e.g. in system `init()`).
-Doing so causes silent failures in many browsers and can prevent subsequent code from running.
-
----
-
-## A-Frame component structure
-
-### Registering systems vs components
-
-- **Systems** (`AFRAME.registerSystem`) are scene-level singletons. Put audio and trails here.
-  Configured via matching attribute on `<a-scene jazz-audio="tempo: 75; ...">`.
-- **Components** (`AFRAME.registerComponent`) are per-entity. Put geometry/mesh here.
-  Configured via attribute on `<a-entity jazz-sphere="radius: 200; ...">`.
-
-Both have `init()` (runs once) and `tick(time, dtMs)` (runs every frame before render).
-
-### Trail persistence effect
-
-```javascript
-AFRAME.registerSystem('jazz-trails', {
-  schema: { opacity: { default: 0.08 } },
-  init: function() {
-    var self = this;
-    // Wait for renderstart — renderer is guaranteed ready then
-    this.el.addEventListener('renderstart', function() {
-      self.el.renderer.autoClear = false; // preserve colour buffer between frames
-      var scene = new THREE.Scene();
-      self._mat = new THREE.MeshBasicMaterial({
-        color: 0x000000, transparent: true, opacity: self.data.opacity,
-        depthTest: false, depthWrite: false
-      });
-      scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), self._mat));
-      self._fadeScene  = scene;
-      self._fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-      self._ready = true;
-    });
-  },
-  tick: function() {
-    // tick() runs BEFORE A-Frame renders — correct place to inject pre-render pass
-    if (!this._ready) return;
-    this.el.object3D.background = null; // prevent Three.js force-clear if background was set
-    this.el.renderer.clearDepth();
-    this.el.renderer.render(this._fadeScene, this._fadeCamera);
+  if (!self._engineReady) return;
+  if (!self._playing) {
+    self._maxi.play();          // synchronous — inside the click handler
+    self._playing = true;
   }
 });
 ```
 
-### Barycentric wireframe sphere
+**4. Suspend the AudioContext after `initAudioEngine` resolves**, so it stays
+silent until the user clicks play:
 
-The same GLSL from engine.js works unchanged. Key ShaderMaterial settings:
-
-```javascript
-var mat = new THREE.ShaderMaterial({
-  vertexShader:   JAZZ_VERT,   // same string as in engine.js
-  fragmentShader: JAZZ_FRAG,   // same string as in engine.js
-  uniforms: { uFFT: {value: tex}, uDeform: {value: 1000}, uTime: {value: 0},
-              uLineWidth: {value: 2}, uColor: {value: new THREE.Color(1,1,1)}, uFFTUV: {value: 0} },
-  transparent: true,
-  depthWrite:  false,
-  side:        THREE.DoubleSide   // needed if camera could be inside the geometry
-  // DO NOT set glslVersion — A-Frame's Three.js auto-converts GLSL1 → GLSL3
+```js
+initAudioEngine(libsPath).then(function(maxi) {
+  self._maxi = maxi;
+  maxi.setAudioCode(buildDSPCode(d));
+  maxi.audioWorkletNode.context.suspend(); // start silent
+  // ... rest of wiring
 });
 ```
 
-Add the mesh to the entity's scene graph:
-```javascript
-this.el.setObject3D('mesh', new THREE.Mesh(geo, mat));
+---
+
+## FFT texture pipeline
+
+The analyser output is written into a `THREE.DataTexture` and exposed as
+`window.jazzFFTTexture` for components to read as a uniform:
+
+```js
+// Create — use RGBAFormat + Uint8Array (not RedFormat + Float, inconsistent WebGL2 support)
+this._fftData   = new Uint8Array(FFT_BINS * 4);
+this.fftTexture = new THREE.DataTexture(this._fftData, FFT_BINS, 1, THREE.RGBAFormat);
+window.jazzFFTTexture = this.fftTexture;
+
+// Update in tick() — normalise float frequency data into 0–255 bytes
+analyser.getFloatFrequencyData(this._floatFreqData);
+for (var i = 0; i < FFT_BINS; i++) {
+  var norm = (this._floatFreqData[i] + 100) / 100; // –100..0 dBFS → 0..1
+  var byte = Math.max(0, Math.min(255, norm * 255)) | 0;
+  this._fftData[i * 4]     = byte;
+  this._fftData[i * 4 + 1] = byte;
+  this._fftData[i * 4 + 2] = byte;
+  this._fftData[i * 4 + 3] = 255;
+}
+this.fftTexture.needsUpdate = true;
 ```
 
-### Camera setup
+Components pick it up in `init()`:
 
-Use `<a-entity>` with explicit `camera` component rather than `<a-camera>` primitive,
-and set `userHeight: 0` to disable A-Frame's automatic 1.6m height offset:
-
-```html
-<a-entity camera="userHeight: 0; near: 1; far: 10000"
-          position="0 0 500"
-          look-controls="pointerLockEnabled: true"
-          wasd-controls="acceleration: 500; fly: true"></a-entity>
-```
-
-### Renderer settings
-
-Set on the `<a-scene>` element. `preserveDrawingBuffer: true` is required for trail effect:
-
-```html
-<a-scene renderer="preserveDrawingBuffer: true; antialias: false" ...>
+```js
+init: function() {
+  var fftTex = window.jazzFFTTexture || fallbackTexture;
+  // pass to ShaderMaterial uniform
+}
 ```
 
 ---
 
-## Full HTML structure
+## Writing a component
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <script src="./aframe.min.js"></script>   <!-- local copy — CDN may be blocked -->
-  <script src="./jazz-aframe.js"></script>  <!-- registers systems + components -->
-</head>
-<body>
-  <!-- UI overlaid on canvas -->
-  <div id="ui" style="position:absolute;top:16px;left:16px;z-index:10">
-    <button id="playButton">play</button>
-    <button id="resetButton">reset</button>
-  </div>
+Components are per-entity. Systems are per-scene. Use a system for audio and
+trail rendering; use a component for each visual object.
 
-  <a-scene
-    renderer="preserveDrawingBuffer: true; antialias: false"
-    jazz-trails="opacity: 0.08"
-    jazz-audio="tempo: 75; sparsity_1: 0.6; sparsity_2: 0.7;
-                fastModIRange: 15000; positiveFeedbackValue: 1.000005;
-                decayFeedbackValue: 0.9995"
-    vr-mode-ui="enabled: false">
+```js
+AFRAME.registerComponent('jazz-sphere', {
+  schema: {
+    radius:    { default: 200 },
+    segments:  { default: 22 },
+    deform:    { default: 1000 },
+    lineWidth: { default: 2.0 },
+    fftUV:     { default: 0.0 }
+  },
 
-    <a-entity jazz-sphere="radius: 200; segments: 22; deform: 1000;
-                            lineWidth: 2; fftUV: 0"></a-entity>
+  init: function() {
+    var d   = this.data;
+    var geo = addBarycentricCoords(new THREE.SphereGeometry(d.radius, d.segments, d.segments));
+    var mat = new THREE.ShaderMaterial({
+      vertexShader:   JAZZ_VERT,
+      fragmentShader: JAZZ_FRAG,
+      uniforms: {
+        uFFT:       { value: window.jazzFFTTexture },
+        uDeform:    { value: d.deform },
+        uTime:      { value: 0 },
+        uLineWidth: { value: d.lineWidth },
+        uColor:     { value: new THREE.Color(1, 1, 1) },
+        uFFTUV:     { value: d.fftUV }
+      },
+      transparent: true,
+      depthWrite:  false,
+      side: THREE.DoubleSide
+      // Do NOT set glslVersion — Three.js handles GLSL1→WebGL2 automatically
+    });
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.el.setObject3D('mesh', this.mesh);
+  },
 
-    <a-entity camera="userHeight: 0; near: 1; far: 10000"
-              position="0 0 500"
-              look-controls="pointerLockEnabled: true"
-              wasd-controls="acceleration: 500; fly: true"></a-entity>
-  </a-scene>
-</body>
-</html>
+  tick: function(time, dtMs) {
+    var dt = dtMs / 1000;
+    this.mesh.material.uniforms.uTime.value = time / 1000;
+    // drive rotation from window.jazzRMS (set by jazz-audio system)
+    var speed = 0.05 + window.jazzRMS * 0.4;
+    this.mesh.rotation.y += window.jazzRotDir[1] * speed * dt;
+    this.mesh.rotation.x += window.jazzRotDir[0] * speed * 0.3 * dt;
+  }
+});
 ```
 
 ---
 
-## Checklist
+## Camera
 
-- [ ] `aframe.min.js` committed to repo (not loaded from CDN)
-- [ ] `AudioContext` created only inside a play button click handler
-- [ ] DataTexture uses `THREE.RGBAFormat` + `Uint8Array`, alpha channel set to 255
-- [ ] No `glslVersion` on ShaderMaterial
-- [ ] `side: THREE.DoubleSide` on ShaderMaterial
-- [ ] `jazz-trails` system sets `renderer.autoClear = false` inside `renderstart` listener
-- [ ] Camera uses `<a-entity camera="userHeight: 0">` not `<a-camera>`
-- [ ] No inline `<script>` that runs at parse time and queries uninitialized A-Frame elements
-- [ ] Add `<a-sphere color="red">` as a diagnostic when debugging — if it doesn't appear,
-      A-Frame itself isn't rendering (check browser console for errors)
+Use `<a-entity>` with explicit component attributes. Do not use `<a-camera>` —
+it adds a 1.6 m height offset that shifts the scene:
+
+```html
+<a-entity
+  id="camera"
+  camera="userHeight: 0; near: 1; far: 10000"
+  position="0 0 500"
+  look-controls="pointerLockEnabled: true; magicWindowTrackingEnabled: false"
+  wasd-controls="acceleration: 500; fly: true"
+></a-entity>
+```
+
+---
+
+## Trail persistence
+
+The trail effect requires `renderer.autoClear = false` and a black semi-transparent
+quad rendered before A-Frame's main scene each frame. This is handled by the
+`jazz-trails` system; do not reproduce it in a component.
+
+The system must also clear `sceneEl.object3D.background = null` each tick to
+prevent Three.js from force-clearing the canvas before the trail quad.
+
+---
+
+## GLSL shaders
+
+Write shaders using GLSL 1 syntax (`attribute`, `varying`, `texture2D`,
+`gl_FragColor`). Do not set `glslVersion: THREE.GLSL1` or
+`glslVersion: THREE.GLSL3` — Three.js auto-converts GLSL 1 to WebGL2 syntax.
+Setting `glslVersion` explicitly breaks the auto-conversion.
+
+`fwidth()` works in WebGL2 without any extension declaration.
+
+---
+
+## Checklist before testing
+
+- [ ] `enable-threads.js` is the first script tag
+- [ ] `maximilian.v.0.1.js` comes before `aframe.min.js`
+- [ ] `aframe.min.js` is a local file, not a CDN URL
+- [ ] `initAudioEngine` uses `new URL('./libs', document.location.href).href`
+- [ ] `maxi.play()` is called synchronously inside a click handler
+- [ ] `maxi.audioWorkletNode.context.suspend()` is called after init resolves
+- [ ] No custom `glslVersion` on ShaderMaterial
+- [ ] FFT texture uses `THREE.RGBAFormat` + `Uint8Array`
+- [ ] Camera entity uses `camera="userHeight: 0"`, not `<a-camera>`
